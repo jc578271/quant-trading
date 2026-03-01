@@ -42,7 +42,7 @@ public class SimpleTelegramNotifier implements
     private final Layer1ApiProvider provider;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
     private final ConcurrentHashMap<String, Long> lastDataTime = new ConcurrentHashMap<>();
-    
+
     private String botToken = "";
     private String chatId = "";
     private int timeoutSeconds = 30;
@@ -53,7 +53,7 @@ public class SimpleTelegramNotifier implements
     private long timeoutStartTime = 0;
     private java.util.concurrent.ScheduledFuture<?> timeoutTask;
     private java.util.concurrent.ScheduledFuture<?> periodicTask;
-    
+
     // Time range configuration
     private DayOfWeek startDayOfWeek = DayOfWeek.MONDAY;
     private DayOfWeek endDayOfWeek = DayOfWeek.FRIDAY;
@@ -62,7 +62,7 @@ public class SimpleTelegramNotifier implements
     private boolean timeRangeEnabled = false;
     private boolean isInTimeRange = false;
     private java.util.concurrent.ScheduledFuture<?> timeRangeTask;
-    
+
     private JTextField botTokenField;
     private JTextField chatIdField;
     private JTextField timeoutField;
@@ -75,20 +75,26 @@ public class SimpleTelegramNotifier implements
     private JLabel statusLabel;
     private JLabel timeRangeStatusLabel;
     private final File configFile;
-    
+
     public SimpleTelegramNotifier(Layer1ApiProvider provider) {
         this.provider = provider;
         this.configFile = new File(System.getProperty("user.home"), "SimpleTelegramNotifier.properties");
         ListenableHelper.addListeners(provider, this);
         loadConfig(); // Load saved configuration on startup
         startTimeRangeMonitoring(); // Start time range monitoring
+
+        // Auto-start monitoring if it was previously enabled
+        if (isMonitoring) {
+            isMonitoring = false; // Reset so startMonitoring() can set it
+            startMonitoring();
+            System.out.println("✅ Auto-started monitoring from saved state");
+        }
     }
-    
+
     @Override
     public void onUserMessage(Object data) {
         if (data instanceof velox.api.layer1.messages.UserMessageLayersChainCreatedTargeted) {
-            velox.api.layer1.messages.UserMessageLayersChainCreatedTargeted message = 
-                (velox.api.layer1.messages.UserMessageLayersChainCreatedTargeted) data;
+            velox.api.layer1.messages.UserMessageLayersChainCreatedTargeted message = (velox.api.layer1.messages.UserMessageLayersChainCreatedTargeted) data;
             if (message.targetClass == getClass()) {
                 System.out.println("=== Simple Telegram Notifier Started ===");
                 System.out.println("To set Telegram config: setTelegramConfig(botToken, chatId)");
@@ -102,7 +108,7 @@ public class SimpleTelegramNotifier implements
             }
         }
     }
-    
+
     @Override
     public void onDepth(String alias, boolean isBid, int price, int size) {
         lastDataTime.put(alias, System.currentTimeMillis());
@@ -111,27 +117,27 @@ public class SimpleTelegramNotifier implements
             isInTimeoutState = false;
             isPeriodicScheduled = false;
             timeoutStartTime = 0;
-            
+
             // Cancel periodic task if it's running
             if (periodicTask != null && !periodicTask.isCancelled()) {
                 periodicTask.cancel(false);
                 periodicTask = null;
             }
-            
+
             System.out.println("✅ Data received - timeout state reset");
         }
     }
-    
+
     @Override
     public void onMarketMode(String alias, velox.api.layer1.data.MarketMode mode) {
         lastDataTime.put(alias, System.currentTimeMillis());
     }
-    
+
     @Override
     public void onTrade(String alias, double price, int size, velox.api.layer1.data.TradeInfo tradeInfo) {
         lastDataTime.put(alias, System.currentTimeMillis());
     }
-    
+
     public void startMonitoring() {
         if (!isMonitoring) {
             isMonitoring = true;
@@ -139,18 +145,19 @@ public class SimpleTelegramNotifier implements
             isPeriodicScheduled = false;
             timeoutStartTime = 0;
             timeoutTask = scheduler.scheduleAtFixedRate(this::checkDataTimeout, 5, 5, TimeUnit.SECONDS);
-            System.out.println("✅ Data monitoring started - timeout: " + timeoutSeconds + " seconds, periodic: " + periodicSeconds + " seconds");
+            System.out.println("✅ Data monitoring started - timeout: " + timeoutSeconds + " seconds, periodic: "
+                    + periodicSeconds + " seconds");
             updateStatus();
         }
     }
-    
+
     public void stopMonitoring() {
         if (isMonitoring) {
             isMonitoring = false;
             isInTimeoutState = false;
             isPeriodicScheduled = false;
             timeoutStartTime = 0;
-            
+
             // Cancel scheduled tasks
             if (timeoutTask != null && !timeoutTask.isCancelled()) {
                 timeoutTask.cancel(false);
@@ -160,12 +167,12 @@ public class SimpleTelegramNotifier implements
                 periodicTask.cancel(false);
                 periodicTask = null;
             }
-            
+
             System.out.println("⏹️ Data monitoring stopped");
             updateStatus();
         }
     }
-    
+
     private void updateStatus() {
         if (statusLabel != null) {
             SwingUtilities.invokeLater(() -> {
@@ -179,7 +186,7 @@ public class SimpleTelegramNotifier implements
             });
         }
     }
-    
+
     private void updateTimeRangeStatus() {
         if (timeRangeStatusLabel != null) {
             SwingUtilities.invokeLater(() -> {
@@ -196,46 +203,48 @@ public class SimpleTelegramNotifier implements
             });
         }
     }
-    
+
     private void startTimeRangeMonitoring() {
         // Check time range every minute
         timeRangeTask = scheduler.scheduleAtFixedRate(this::checkTimeRange, 0, 1, TimeUnit.MINUTES);
     }
-    
+
     private void checkTimeRange() {
         if (!timeRangeEnabled) {
             isInTimeRange = false;
             updateTimeRangeStatus();
             return;
         }
-        
+
         try {
             LocalDateTime now = LocalDateTime.now();
-            
+
             // 1. Get timestamp of Monday 00:00 of current week
             LocalDateTime mondayOfCurrentWeek = now.with(DayOfWeek.MONDAY).with(LocalTime.of(0, 0));
-            
+
             // 2. Calculate start timestamp (Monday 00:00 + start day offset + start time)
             int startDayOffset = startDayOfWeek.getValue() - 1; // Monday=0, Tuesday=1, etc.
             LocalTime startTimeParsed = LocalTime.parse(startTime, DateTimeFormatter.ofPattern("HH:mm"));
             LocalDateTime startTimestamp = mondayOfCurrentWeek.plusDays(startDayOffset).with(startTimeParsed);
-            
+
             // 3. Calculate end timestamp (Monday 00:00 + end day offset + end time)
             int endDayOffset = endDayOfWeek.getValue() - 1; // Monday=0, Tuesday=1, etc.
             LocalTime endTimeParsed = LocalTime.parse(endTime, DateTimeFormatter.ofPattern("HH:mm"));
             LocalDateTime endTimestamp = mondayOfCurrentWeek.plusDays(endDayOffset).with(endTimeParsed);
-            
+
             // 4. Check if current timestamp is between start and end timestamps
             boolean wasInRange = isInTimeRange;
             isInTimeRange = !now.isBefore(startTimestamp) && !now.isAfter(endTimestamp);
-            
+
             // Debug output
             System.out.println("🔍 DEBUG: Current: " + now);
             System.out.println("🔍 DEBUG: Monday of week: " + mondayOfCurrentWeek);
-            System.out.println("🔍 DEBUG: Start timestamp: " + startTimestamp + " (Day: " + startDayOfWeek + ", Time: " + startTime + ")");
-            System.out.println("🔍 DEBUG: End timestamp: " + endTimestamp + " (Day: " + endDayOfWeek + ", Time: " + endTime + ")");
+            System.out.println("🔍 DEBUG: Start timestamp: " + startTimestamp + " (Day: " + startDayOfWeek + ", Time: "
+                    + startTime + ")");
+            System.out.println(
+                    "🔍 DEBUG: End timestamp: " + endTimestamp + " (Day: " + endDayOfWeek + ", Time: " + endTime + ")");
             System.out.println("🔍 DEBUG: In range: " + isInTimeRange);
-            
+
             // Update status if it changed
             if (wasInRange != isInTimeRange) {
                 updateTimeRangeStatus();
@@ -251,14 +260,14 @@ public class SimpleTelegramNotifier implements
             updateTimeRangeStatus();
         }
     }
-    
+
     private boolean isWithinTimeRange() {
         if (!timeRangeEnabled) {
             return true; // If time range is disabled, always consider it "within range"
         }
         return isInTimeRange;
     }
-    
+
     private boolean isValidTimeFormat(String time) {
         try {
             LocalTime.parse(time, DateTimeFormatter.ofPattern("HH:mm"));
@@ -267,7 +276,7 @@ public class SimpleTelegramNotifier implements
             return false;
         }
     }
-    
+
     private void updateStartTime() {
         String newTime = startTimeField.getText().trim();
         if (isValidTimeFormat(newTime)) {
@@ -276,11 +285,11 @@ public class SimpleTelegramNotifier implements
             updateTimeRangeStatus();
         } else {
             startTimeField.setText(startTime); // Revert to previous valid value
-            JOptionPane.showMessageDialog(null, "Invalid time format. Please use HH:mm (e.g., 09:30)", 
-                "Invalid Time Format", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(null, "Invalid time format. Please use HH:mm (e.g., 09:30)",
+                    "Invalid Time Format", JOptionPane.ERROR_MESSAGE);
         }
     }
-    
+
     private void updateEndTime() {
         String newTime = endTimeField.getText().trim();
         if (isValidTimeFormat(newTime)) {
@@ -289,25 +298,26 @@ public class SimpleTelegramNotifier implements
             updateTimeRangeStatus();
         } else {
             endTimeField.setText(endTime); // Revert to previous valid value
-            JOptionPane.showMessageDialog(null, "Invalid time format. Please use HH:mm (e.g., 17:30)", 
-                "Invalid Time Format", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(null, "Invalid time format. Please use HH:mm (e.g., 17:30)",
+                    "Invalid Time Format", JOptionPane.ERROR_MESSAGE);
         }
     }
-    
+
     private void checkDataTimeout() {
-        if (!isMonitoring) return;
-        
+        if (!isMonitoring)
+            return;
+
         // Check if we're within the configured time range
         if (!isWithinTimeRange()) {
             return; // Don't send alerts outside of time range
         }
-        
+
         long currentTime = System.currentTimeMillis();
         long timeoutMs = timeoutSeconds * 1000L;
-        
+
         boolean hasRecentData = lastDataTime.values().stream()
                 .anyMatch(lastTime -> (currentTime - lastTime) < timeoutMs);
-        
+
         if (!hasRecentData && !lastDataTime.isEmpty()) {
             if (!isInTimeoutState) {
                 // First timeout alert
@@ -315,39 +325,41 @@ public class SimpleTelegramNotifier implements
                 System.out.println("🔴 First timeout triggered after " + timeoutSeconds + " seconds");
                 sendMessage("No connection after " + timeoutSeconds + " seconds");
                 isInTimeoutState = true;
-                
+
                 // Start periodic alerts if configured
                 if (periodicSeconds > 0 && !isPeriodicScheduled) {
                     isPeriodicScheduled = true;
                     System.out.println("⏰ Starting periodic alerts every " + periodicSeconds + " seconds");
-                    // Start periodic alerts after the first periodic interval to avoid duplicate messages
-                    periodicTask = scheduler.scheduleAtFixedRate(this::sendPeriodicTimeoutAlert, periodicSeconds, periodicSeconds, TimeUnit.SECONDS);
+                    // Start periodic alerts after the first periodic interval to avoid duplicate
+                    // messages
+                    periodicTask = scheduler.scheduleAtFixedRate(this::sendPeriodicTimeoutAlert, periodicSeconds,
+                            periodicSeconds, TimeUnit.SECONDS);
                 }
             }
         }
     }
-    
+
     private void sendPeriodicTimeoutAlert() {
         if (!isMonitoring || !isInTimeoutState) {
             return;
         }
-        
+
         // Check if we're within the configured time range
         if (!isWithinTimeRange()) {
             return; // Don't send alerts outside of time range
         }
-        
+
         long currentTime = System.currentTimeMillis();
         long timeoutMs = timeoutSeconds * 1000L;
         boolean hasRecentData = lastDataTime.values().stream()
                 .anyMatch(lastTime -> (currentTime - lastTime) < timeoutMs);
-        
+
         if (!hasRecentData && !lastDataTime.isEmpty()) {
             // Calculate how many periodic intervals have passed since timeout started
             long timeSinceTimeout = currentTime - timeoutStartTime;
             long periodicIntervalsPassed = timeSinceTimeout / (periodicSeconds * 1000L);
             long totalSeconds = timeoutSeconds + (periodicIntervalsPassed * periodicSeconds);
-            
+
             System.out.println("📡 Periodic alert: " + totalSeconds + " seconds total");
             sendMessage("No connection after " + totalSeconds + " seconds");
         } else {
@@ -356,7 +368,7 @@ public class SimpleTelegramNotifier implements
             isInTimeoutState = false;
             isPeriodicScheduled = false;
             timeoutStartTime = 0;
-            
+
             // Cancel periodic task
             if (periodicTask != null && !periodicTask.isCancelled()) {
                 periodicTask.cancel(false);
@@ -364,61 +376,71 @@ public class SimpleTelegramNotifier implements
             }
         }
     }
-    
+
     @Override
     public velox.gui.StrategyPanel[] getCustomGuiFor(String indicatorName, String indicatorFullName) {
         JPanel panel = new JPanel(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(5, 5, 5, 5);
         gbc.fill = GridBagConstraints.HORIZONTAL;
-        
+
         // Bot Token
-        gbc.gridx = 0; gbc.gridy = 0;
+        gbc.gridx = 0;
+        gbc.gridy = 0;
         panel.add(new JLabel("Bot Token:"), gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 0;
+
+        gbc.gridx = 1;
+        gbc.gridy = 0;
         gbc.weightx = 1.0;
         botTokenField = new JTextField(15);
         botTokenField.setText(botToken); // Set saved value
         panel.add(botTokenField, gbc);
-        
+
         // Chat ID
-        gbc.gridx = 0; gbc.gridy = 1;
+        gbc.gridx = 0;
+        gbc.gridy = 1;
         gbc.weightx = 0.0;
         panel.add(new JLabel("Chat ID:"), gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 1;
+
+        gbc.gridx = 1;
+        gbc.gridy = 1;
         gbc.weightx = 1.0;
         chatIdField = new JTextField(15);
         chatIdField.setText(chatId); // Set saved value
         panel.add(chatIdField, gbc);
-        
+
         // Timeout
-        gbc.gridx = 0; gbc.gridy = 2;
+        gbc.gridx = 0;
+        gbc.gridy = 2;
         gbc.weightx = 0.0;
         panel.add(new JLabel("Timeout:"), gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 2;
+
+        gbc.gridx = 1;
+        gbc.gridy = 2;
         gbc.weightx = 1.0;
         timeoutField = new JTextField(String.valueOf(timeoutSeconds), 8);
         panel.add(timeoutField, gbc);
-        
+
         // Periodic
-        gbc.gridx = 0; gbc.gridy = 3;
+        gbc.gridx = 0;
+        gbc.gridy = 3;
         gbc.weightx = 0.0;
         panel.add(new JLabel("Periodic:"), gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 3;
+
+        gbc.gridx = 1;
+        gbc.gridy = 3;
         gbc.weightx = 1.0;
         periodicField = new JTextField(String.valueOf(periodicSeconds), 8);
         panel.add(periodicField, gbc);
-        
+
         // Time Range
-        gbc.gridx = 0; gbc.gridy = 4;
+        gbc.gridx = 0;
+        gbc.gridy = 4;
         gbc.weightx = 0.0;
         panel.add(new JLabel("Time Range:"), gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 4;
+
+        gbc.gridx = 1;
+        gbc.gridy = 4;
         gbc.weightx = 1.0;
         timeRangeEnabledCheckBox = new JCheckBox("Enable Time Range Monitoring");
         timeRangeEnabledCheckBox.setSelected(timeRangeEnabled);
@@ -428,17 +450,17 @@ public class SimpleTelegramNotifier implements
             updateTimeRangeStatus();
         });
         panel.add(timeRangeEnabledCheckBox, gbc);
-        
+
         // Time Range Settings - Separate Panel with GridLayout
         JPanel timeRangePanel = new JPanel(new GridLayout(3, 2, 10, 5));
         timeRangePanel.setBorder(BorderFactory.createTitledBorder("Time Range Settings"));
-        
-        String[] daysOfWeek = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
-        
+
+        String[] daysOfWeek = { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" };
+
         // Column Headers
         timeRangePanel.add(new JLabel("Start Time:", SwingConstants.CENTER));
         timeRangePanel.add(new JLabel("End Time:", SwingConstants.CENTER));
-        
+
         // Start Day
         startDayComboBox = new JComboBox<>(daysOfWeek);
         startDayComboBox.setSelectedIndex(startDayOfWeek.getValue() - 1);
@@ -448,7 +470,7 @@ public class SimpleTelegramNotifier implements
             updateTimeRangeStatus();
         });
         timeRangePanel.add(startDayComboBox);
-        
+
         // End Day
         endDayComboBox = new JComboBox<>(daysOfWeek);
         endDayComboBox.setSelectedIndex(endDayOfWeek.getValue() - 1);
@@ -458,7 +480,7 @@ public class SimpleTelegramNotifier implements
             updateTimeRangeStatus();
         });
         timeRangePanel.add(endDayComboBox);
-        
+
         // Start Time
         startTimeField = new JTextField(startTime, 8);
         startTimeField.setToolTipText("Enter start time in HH:mm format (e.g., 09:30)");
@@ -472,7 +494,7 @@ public class SimpleTelegramNotifier implements
             }
         });
         timeRangePanel.add(startTimeField);
-        
+
         // End Time
         endTimeField = new JTextField(endTime, 8);
         endTimeField.setToolTipText("Enter end time in HH:mm format (e.g., 17:30)");
@@ -486,50 +508,53 @@ public class SimpleTelegramNotifier implements
             }
         });
         timeRangePanel.add(endTimeField);
-        
+
         // Add the time range panel to the main panel
-        gbc.gridx = 0; gbc.gridy = 5;
+        gbc.gridx = 0;
+        gbc.gridy = 5;
         gbc.gridwidth = 2;
         gbc.weightx = 1.0;
         gbc.fill = GridBagConstraints.HORIZONTAL;
         panel.add(timeRangePanel, gbc);
-        
+
         // Status Display
-        gbc.gridx = 0; gbc.gridy = 10;
+        gbc.gridx = 0;
+        gbc.gridy = 10;
         gbc.gridwidth = 2;
         gbc.weightx = 0.0;
         statusLabel = new JLabel("Status: Not Monitoring", SwingConstants.CENTER);
         statusLabel.setForeground(Color.RED);
         statusLabel.setFont(new Font("Arial", Font.BOLD, 12));
         panel.add(statusLabel, gbc);
-        
+
         // Time Range Status Display
-        gbc.gridx = 0; gbc.gridy = 11;
+        gbc.gridx = 0;
+        gbc.gridy = 11;
         gbc.gridwidth = 2;
         gbc.weightx = 0.0;
         timeRangeStatusLabel = new JLabel("Time Range Status: Not Active", SwingConstants.CENTER);
         timeRangeStatusLabel.setForeground(Color.GRAY);
         timeRangeStatusLabel.setFont(new Font("Arial", Font.BOLD, 12));
         panel.add(timeRangeStatusLabel, gbc);
-        
+
         // Update status display with current state
         updateStatus();
-        
+
         // Force a time range check and update status when UI is created
         checkTimeRange();
         updateTimeRangeStatus();
-        
+
         // Buttons in Column
         JPanel buttonPanel = new JPanel(new GridLayout(0, 1, 5, 5));
         buttonPanel.setBorder(BorderFactory.createEmptyBorder(10, 0, 10, 0));
-        
+
         JButton testButton = new JButton("Test");
         testButton.addActionListener(e -> {
             saveConfig();
             testTelegram();
         });
         buttonPanel.add(testButton);
-        
+
         JButton sendButton = new JButton("Send Message");
         sendButton.addActionListener(e -> {
             saveConfig();
@@ -539,31 +564,32 @@ public class SimpleTelegramNotifier implements
             }
         });
         buttonPanel.add(sendButton);
-        
+
         JButton startButton = new JButton("Start Monitor");
         startButton.addActionListener(e -> {
             saveConfig();
             startMonitoring();
         });
         buttonPanel.add(startButton);
-        
+
         JButton stopButton = new JButton("Stop Monitor");
         stopButton.addActionListener(e -> {
             saveConfig();
             stopMonitoring();
         });
         buttonPanel.add(stopButton);
-        
-        gbc.gridx = 0; gbc.gridy = 12;
+
+        gbc.gridx = 0;
+        gbc.gridy = 12;
         gbc.gridwidth = 2;
         gbc.weightx = 0.0;
         panel.add(buttonPanel, gbc);
-        
+
         velox.gui.StrategyPanel strategyPanel = new velox.gui.StrategyPanel("Telegram Settings", true);
         strategyPanel.add(panel);
         return new velox.gui.StrategyPanel[] { strategyPanel };
     }
-    
+
     public void setTelegramConfig(String botToken, String chatId) {
         this.botToken = botToken;
         this.chatId = chatId;
@@ -573,10 +599,11 @@ public class SimpleTelegramNotifier implements
         if (chatIdField != null) {
             chatIdField.setText(chatId);
         }
-        System.out.println("Telegram config set - Bot: " + botToken.substring(0, Math.min(10, botToken.length())) + "...");
+        System.out.println(
+                "Telegram config set - Bot: " + botToken.substring(0, Math.min(10, botToken.length())) + "...");
         System.out.println("Chat ID: " + chatId);
     }
-    
+
     public void setTimeout(int seconds) {
         this.timeoutSeconds = seconds;
         if (timeoutField != null) {
@@ -584,7 +611,7 @@ public class SimpleTelegramNotifier implements
         }
         System.out.println("Timeout set to: " + seconds + " seconds");
     }
-    
+
     private void saveConfig() {
         botToken = botTokenField.getText().trim();
         chatId = chatIdField.getText().trim();
@@ -600,12 +627,12 @@ public class SimpleTelegramNotifier implements
             periodicSeconds = 0;
             periodicField.setText("0");
         }
-        
+
         // Save time range settings
         timeRangeEnabled = timeRangeEnabledCheckBox.isSelected();
         startTime = startTimeField.getText().trim();
         endTime = endTimeField.getText().trim();
-        
+
         // Validate time format
         try {
             LocalTime.parse(startTime, DateTimeFormatter.ofPattern("HH:mm"));
@@ -617,7 +644,7 @@ public class SimpleTelegramNotifier implements
             endTimeField.setText(endTime);
             System.out.println("⚠️ Invalid time format, reset to default: " + startTime + " - " + endTime);
         }
-        
+
         // Save day of week settings
         if (startDayComboBox != null) {
             startDayOfWeek = DayOfWeek.of(startDayComboBox.getSelectedIndex() + 1);
@@ -625,22 +652,22 @@ public class SimpleTelegramNotifier implements
         if (endDayComboBox != null) {
             endDayOfWeek = DayOfWeek.of(endDayComboBox.getSelectedIndex() + 1);
         }
-        
+
         // Save to file
         saveConfigToFile();
-        
+
         // Update time range status immediately
         checkTimeRange();
-        
+
         System.out.println("Config saved - Bot: " + botToken.substring(0, Math.min(10, botToken.length())) + "...");
         System.out.println("Chat ID: " + chatId);
         System.out.println("Timeout: " + timeoutSeconds + " seconds");
         System.out.println("Periodic: " + periodicSeconds + " seconds");
-        System.out.println("Time Range: " + (timeRangeEnabled ? "Enabled" : "Disabled") + 
-                          (timeRangeEnabled ? " (" + startDayOfWeek + " to " + endDayOfWeek + 
-                           ", Time: " + startTime + " - " + endTime + ")" : ""));
+        System.out.println("Time Range: " + (timeRangeEnabled ? "Enabled" : "Disabled") +
+                (timeRangeEnabled ? " (" + startDayOfWeek + " to " + endDayOfWeek +
+                        ", Time: " + startTime + " - " + endTime + ")" : ""));
     }
-    
+
     private void saveConfigToFile() {
         try {
             Properties props = new Properties();
@@ -653,7 +680,8 @@ public class SimpleTelegramNotifier implements
             props.setProperty("endTime", endTime);
             props.setProperty("startDayOfWeek", String.valueOf(startDayOfWeek.getValue()));
             props.setProperty("endDayOfWeek", String.valueOf(endDayOfWeek.getValue()));
-            
+            props.setProperty("isMonitoring", String.valueOf(isMonitoring));
+
             try (FileWriter writer = new FileWriter(configFile)) {
                 props.store(writer, "Simple Telegram Notifier Configuration");
             }
@@ -662,55 +690,63 @@ public class SimpleTelegramNotifier implements
             System.err.println("❌ Error saving configuration: " + e.getMessage());
         }
     }
-    
+
     private void loadConfig() {
         if (!configFile.exists()) {
             System.out.println("No saved configuration found");
             return;
         }
-        
+
         try {
             Properties props = new Properties();
             try (FileReader reader = new FileReader(configFile)) {
                 props.load(reader);
             }
-            
+
             botToken = props.getProperty("botToken", "");
             chatId = props.getProperty("chatId", "");
             timeoutSeconds = Integer.parseInt(props.getProperty("timeoutSeconds", "30"));
             periodicSeconds = Integer.parseInt(props.getProperty("periodicSeconds", "0"));
-            
+
             // Load time range settings
             timeRangeEnabled = Boolean.parseBoolean(props.getProperty("timeRangeEnabled", "false"));
             startTime = props.getProperty("startTime", "09:00");
             endTime = props.getProperty("endTime", "17:00");
             startDayOfWeek = DayOfWeek.of(Integer.parseInt(props.getProperty("startDayOfWeek", "1")));
             endDayOfWeek = DayOfWeek.of(Integer.parseInt(props.getProperty("endDayOfWeek", "5")));
-            
+            isMonitoring = Boolean.parseBoolean(props.getProperty("isMonitoring", "false"));
+
             // Update UI fields if they exist
-            if (botTokenField != null) botTokenField.setText(botToken);
-            if (chatIdField != null) chatIdField.setText(chatId);
-            if (timeoutField != null) timeoutField.setText(String.valueOf(timeoutSeconds));
-            if (periodicField != null) periodicField.setText(String.valueOf(periodicSeconds));
-            if (timeRangeEnabledCheckBox != null) timeRangeEnabledCheckBox.setSelected(timeRangeEnabled);
-            if (startTimeField != null) startTimeField.setText(startTime);
-            if (endTimeField != null) endTimeField.setText(endTime);
+            if (botTokenField != null)
+                botTokenField.setText(botToken);
+            if (chatIdField != null)
+                chatIdField.setText(chatId);
+            if (timeoutField != null)
+                timeoutField.setText(String.valueOf(timeoutSeconds));
+            if (periodicField != null)
+                periodicField.setText(String.valueOf(periodicSeconds));
+            if (timeRangeEnabledCheckBox != null)
+                timeRangeEnabledCheckBox.setSelected(timeRangeEnabled);
+            if (startTimeField != null)
+                startTimeField.setText(startTime);
+            if (endTimeField != null)
+                endTimeField.setText(endTime);
             if (startDayComboBox != null) {
                 startDayComboBox.setSelectedIndex(startDayOfWeek.getValue() - 1);
             }
             if (endDayComboBox != null) {
                 endDayComboBox.setSelectedIndex(endDayOfWeek.getValue() - 1);
             }
-            
+
             System.out.println("✅ Configuration loaded from: " + configFile.getAbsolutePath());
             System.out.println("Bot: " + botToken.substring(0, Math.min(10, botToken.length())) + "...");
             System.out.println("Chat ID: " + chatId);
             System.out.println("Timeout: " + timeoutSeconds + " seconds");
             System.out.println("Periodic: " + periodicSeconds + " seconds");
-            System.out.println("Time Range: " + (timeRangeEnabled ? "Enabled" : "Disabled") + 
-                              (timeRangeEnabled ? " (" + startDayOfWeek + " to " + endDayOfWeek + 
-                               ", Time: " + startTime + " - " + endTime + ")" : ""));
-            
+            System.out.println("Time Range: " + (timeRangeEnabled ? "Enabled" : "Disabled") +
+                    (timeRangeEnabled ? " (" + startDayOfWeek + " to " + endDayOfWeek +
+                            ", Time: " + startTime + " - " + endTime + ")" : ""));
+
             // Update status displays if UI is already created
             updateStatus();
             updateTimeRangeStatus();
@@ -718,68 +754,69 @@ public class SimpleTelegramNotifier implements
             System.err.println("❌ Error loading configuration: " + e.getMessage());
         }
     }
-    
+
     public void testTelegram() {
         sendMessage("Test message from Simple Telegram Notifier");
     }
-    
+
     public boolean isTimeRangeActive() {
         return timeRangeEnabled && isInTimeRange;
     }
-    
+
     public String getTimeRangeStatus() {
         if (!timeRangeEnabled) {
             return "Time Range: Disabled";
         }
-        return isInTimeRange ? 
-            "Time Range: IN RANGE (" + startDayOfWeek + " to " + endDayOfWeek + 
-            ", Time: " + startTime + " - " + endTime + ")" :
-            "Time Range: OUT OF RANGE (" + startDayOfWeek + " to " + endDayOfWeek + 
-            ", Time: " + startTime + " - " + endTime + ")";
+        return isInTimeRange ? "Time Range: IN RANGE (" + startDayOfWeek + " to " + endDayOfWeek +
+                ", Time: " + startTime + " - " + endTime + ")"
+                : "Time Range: OUT OF RANGE (" + startDayOfWeek + " to " + endDayOfWeek +
+                        ", Time: " + startTime + " - " + endTime + ")";
     }
-    
+
     public void sendMessage(String message) {
         if (botToken.isEmpty() || chatId.isEmpty()) {
             System.out.println("Telegram not configured. Use setTelegramConfig(botToken, chatId) first.");
             return;
         }
-        
+
         try {
             String encodedMessage = URLEncoder.encode(message, StandardCharsets.UTF_8.toString());
-            String urlString = String.format("https://api.telegram.org/bot%s/sendMessage?chat_id=%s&text=%s", 
-                                           botToken, chatId, encodedMessage);
-            
+            String urlString = String.format("https://api.telegram.org/bot%s/sendMessage?chat_id=%s&text=%s",
+                    botToken, chatId, encodedMessage);
+
             URL url = new URL(urlString);
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("GET");
             connection.setConnectTimeout(5000);
             connection.setReadTimeout(5000);
-            
+
             int responseCode = connection.getResponseCode();
-            
+
             if (responseCode == 200) {
                 System.out.println("✅ Telegram message sent: " + message);
             } else {
                 System.out.println("❌ Failed to send Telegram message. Status: " + responseCode);
             }
-            
+
             connection.disconnect();
-            
+
         } catch (Exception e) {
             System.err.println("❌ Error sending Telegram message: " + e.getMessage());
         }
     }
-    
+
     @Override
     public void finish() {
+        // Save monitoring state before stopping
+        saveConfigToFile();
         stopMonitoring();
-        
+
         // Cancel time range task
         if (timeRangeTask != null && !timeRangeTask.isCancelled()) {
             timeRangeTask.cancel(false);
             timeRangeTask = null;
         }
-        
+
         if (scheduler != null && !scheduler.isShutdown()) {
             scheduler.shutdown();
             try {
@@ -794,4 +831,4 @@ public class SimpleTelegramNotifier implements
         System.out.println("Simple Telegram Notifier stopped");
         ListenableHelper.removeListeners(provider, this);
     }
-} 
+}
