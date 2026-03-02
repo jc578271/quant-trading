@@ -30,6 +30,13 @@ dependencies {
 
 jar {
     archiveFileName = 'simple-telegram-notifier.jar'
+    exclude 'com/bookmap/alertlistener/**'
+}
+
+tasks.register('alertListenerJar', Jar) {
+    archiveFileName = 'alert-listener.jar'
+    from sourceSets.main.output
+    include 'com/bookmap/alertlistener/**'
 }
 
 eclipse.classpath.downloadJavadoc = true
