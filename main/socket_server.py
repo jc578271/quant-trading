@@ -17,22 +17,21 @@ class SocketServer:
         
         while True:
             try:
-                data = await reader.read(4096)
-                if not data:
+                # Use readline() because JSONs can be very large (e.g. Order Flow Footprint)
+                line = await reader.readline()
+                if not line:
                     break
                     
-                message = data.decode('utf-8').strip()
-                # logging.debug(f"Received message: {message}")
-                
-                # Assume JSON streaming, each message split by newline
-                for m in message.split('\n'):
-                    if not m.strip(): continue
-                    try:
-                        record = json.loads(m.strip())
-                        if self.callback:
-                            self.callback(record)
-                    except json.JSONDecodeError:
-                        logging.error(f"Malformed JSON from cTrader: {m}")
+                message = line.decode('utf-8').strip()
+                if not message:
+                    continue
+                    
+                try:
+                    record = json.loads(message)
+                    if self.callback:
+                        self.callback(record)
+                except json.JSONDecodeError:
+                    logging.error(f"Malformed JSON from cTrader: {message[:100]}...")
                         
             except ConnectionResetError:
                 break
