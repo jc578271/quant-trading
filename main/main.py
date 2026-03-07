@@ -27,6 +27,7 @@ async def main():
     except KeyboardInterrupt:
         logging.info("Shutting down Application...")
     finally:
+        analyzer.shutdown()
         mt5_client.disconnect()
 
 if __name__ == '__main__':
