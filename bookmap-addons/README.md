@@ -20,8 +20,8 @@ This addon continuously monitors the data flow from Rithmic feed in Bookmap and 
 ### Prerequisites
 
 - Bookmap 7.6.0 or later
-- Java 17
-- Gradle (for building)
+- Java 17 (Required for Gradle 9.0)
+- Gradle 9.0 (included via `gradlew`)
 
 ### Building the Addon
 
@@ -29,11 +29,25 @@ This addon continuously monitors the data flow from Rithmic feed in Bookmap and 
 
 1. Clone or download this project
 2. Navigate to the project directory
-3. Run the build command:
-   ```bash
-   gradle jar
-   ```
-4. The compiled JAR file will be created in `build/libs/bm-rithmic-connection-monitor.jar`
+3. Run the build command for your specific addon:
+   - For **Alert Listener**:
+     ```bash
+     .\gradlew.bat alertListenerJar
+     ```
+   - For **Telegram Notifier**:
+     ```bash
+     .\gradlew.bat jar
+     ```
+4. The compiled JAR file will be created in:
+   - `build/libs/alert-listener.jar`
+   - `build/libs/simple-telegram-notifier.jar`
+
+> [!TIP]
+> **Java 17 Requirement**: If you encounter a Java version error (e.g., you have Java 8 installed), you can use the Java runtime bundled with Bookmap.
+> Run the build command with `JAVA_HOME` pointing to Bookmap's JRE:
+> ```powershell
+> $env:JAVA_HOME = "C:\Program Files\Bookmap\jre"; .\gradlew.bat alertListenerJar
+> ```
 
 #### Option 2: Using Windows Batch File
 

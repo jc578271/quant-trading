@@ -12,7 +12,8 @@ import velox.api.layer1.messages.Layer1ApiSoundAlertMessage;
 
 import javax.swing.*;
 import java.awt.*;
-import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,7 +32,7 @@ public class AlertListener implements
     private JLabel countLabel;
     private int alertCount = 0;
     private static final int MAX_LOG_LINES = 500;
-    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
+    private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSSS'Z'");
 
     public AlertListener(Layer1ApiProvider provider) {
         this.provider = provider;
@@ -61,7 +62,7 @@ public class AlertListener implements
 
     private void handleAlert(Layer1ApiSoundAlertMessage alert) {
         alertCount++;
-        String time = LocalDateTime.now().format(TIME_FMT);
+        String time = ZonedDateTime.now(ZoneOffset.UTC).format(TIME_FMT);
 
         StringBuilder sb = new StringBuilder();
         sb.append("[").append(time).append("] ");
