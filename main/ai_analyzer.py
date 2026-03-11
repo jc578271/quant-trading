@@ -106,6 +106,67 @@ class AIAnalyzer:
         except Exception as e:
             logging.error(f"CSV Export Error for {filename}: {e}")
 
+    def export_alert_csv(self, symbol, data):
+        """Export Bookmap alerts to symbol-specific CSV files."""
+        import csv
+        import os
+        
+        # Sanitize symbol for filename
+        clean_symbol = "".join(c if c.isalnum() or c in ".-" else "_" for c in symbol)
+        filename = f"history_alert_{clean_symbol}.csv"
+        
+        # Parse specific fields from the text
+        import re
+        text = data.get("text", "")
+        
+        # 1. AlertName: Extract from start of message, after symbol if present
+        # Example: "HIDDEN ASK DEVELOPMENT" or "Stop buy"
+        alert_name = "Unknown"
+        # Look for the part after the symbol and colon, or the start of a stop/market message
+        name_match = re.search(r'(?::\s+)?(HIDDEN\s+[A-Z]+\s+DEVELOPMENT|Stop\s+[a-z]+|Market\s+[a-z]+)', text, re.I)
+        if name_match:
+            alert_name = name_match.group(1).strip()
+        elif ":" in text:
+            alert_name = text.split(":", 1)[1].split(",")[0].strip()
+
+        # 2. Value: Extract numeric values from "V: 15" or "Volume: 15"
+        value = ""
+        val_match = re.search(r'(?:V|Volume):\s*([\d.]+)', text, re.I)
+        if val_match:
+            value = val_match.group(1)
+
+        # 3. Price: Extract numeric price after "at"
+        price = ""
+        price_match = re.search(r'at\s+([\d.]+)', text, re.I)
+        if price_match:
+            price = price_match.group(1)
+
+        # Prepare row matching the user's template
+        # Row fields: Timestamp,AlertNumber,Symbol,AlertName,Value,Price,Popup,RawText
+        row = {
+            "Timestamp": data.get("timestamp"),
+            "AlertNumber": data.get("count"),
+            "Symbol": symbol,
+            "AlertName": alert_name,
+            "Value": value,
+            "Price": price,
+            "Popup": data.get("popup"),
+            "RawText": text
+        }
+        
+        file_exists = os.path.isfile(filename) and os.path.getsize(filename) > 0
+        fieldnames = ["Timestamp", "AlertNumber", "Symbol", "AlertName", "Value", "Price", "Popup", "RawText"]
+        
+        try:
+            with open(filename, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow(row)
+            # logging.info(f"Alert exported to {filename}")
+        except Exception as e:
+            logging.error(f"Alert CSV Export Error for {filename}: {e}")
+
     def process_data(self, data):
         """
         Buffer incoming data from cTrader to handle asynchronous network delivery
@@ -116,7 +177,49 @@ class AIAnalyzer:
 
         symbol = data.get("symbol", "EURUSD")
         
-        # Dynamic export
+        # Determine if this is a standard indicator or an alert
+        msg_type = data.get("type", "indicator")
+        
+        if msg_type == "alert":
+            self.export_alert_csv(symbol, data)
+            return
+        elif msg_type == "dom":
+            action = data.get("action")
+            alias = data.get("alias")
+            is_bid = data.get("isBid")
+            price = data.get("price")
+            size = data.get("size")
+            
+            # Update local order book state
+            if alias not in self.order_book:
+                self.order_book[alias] = {True: {}, False: {}}
+            
+            side_book = self.order_book[alias][is_bid]
+            if size == 0:
+                side_book.pop(price, None)
+            else:
+                side_book[price] = size
+            
+            # For now, we only log if min volume reached, or just keep it quiet
+            # In the future, we can add OBI calculations here.
+            return
+            
+        elif msg_type == "dot":
+            is_buy = data.get("isBuy")
+            price = data.get("price")
+            size = data.get("size")
+            print(f"DEBUG DOT: {symbol} | {'BUY' if is_buy else 'SELL'} | Price: {price} | Size: {size}")
+            return
+            
+        elif msg_type == "wall":
+            is_bid = data.get("isBid")
+            price = data.get("price")
+            size = data.get("size")
+            duration = data.get("duration")
+            print(f"DEBUG WALL: {symbol} | {'BID' if is_bid else 'ASK'} | Price: {price} | Size: {size} | Dur: {duration}s")
+            return
+            
+        # Dynamic export for indicators
         self.export_individual_csv(symbol, data)
         
         if symbol not in self.raw_data_buffer:
