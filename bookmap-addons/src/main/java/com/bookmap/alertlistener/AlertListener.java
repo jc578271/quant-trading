@@ -167,11 +167,12 @@ public class AlertListener implements
         }).start();
     }
 
-    private void logToUI(String alias, String message) {
+    private String logToUI(String alias, String message) {
         String time = ZonedDateTime.now(ZoneOffset.UTC).format(TIME_FMT);
         String fullMsg = "[" + time + "] " + message;
         updateUI(alias, fullMsg);
         appendLogToFile(alias, fullMsg);
+        return fullMsg;
     }
 
     private void appendLogToFile(String alias, String fullMsg) {
@@ -428,14 +429,14 @@ public class AlertListener implements
             String root = aliasLower.contains(".") ? aliasLower.split("\\.")[0] : aliasLower;
 
             if (textLower.contains(aliasLower) || textLower.contains(root)) {
-                // Add to memory log for this alias
+                // Update UI & Disk for this specific tab
+                String timestampedMsg = logToUI(alias, logEntry);
+                // Add to memory log for this alias (now with timestamp)
                 java.util.List<String> logs = alertLogsMap.computeIfAbsent(alias, k -> new ArrayList<>());
                 synchronized (logs) {
-                    logs.add(logEntry);
+                    logs.add(timestampedMsg);
                     if (logs.size() > MAX_LOG_LINES) logs.remove(0);
                 }
-                // Update UI & Disk for this specific tab
-                logToUI(alias, logEntry);
             }
         }
 
@@ -600,21 +601,12 @@ public class AlertListener implements
         // Register this log area
         logAreas.put(indicatorName, areaForThisTab);
 
-        // Load existing log entries for this instrument
-        java.util.List<String> logs = alertLogsMap.get(indicatorName);
-        if (logs != null) {
-            synchronized (logs) {
-                for (String entry : logs) {
-                    areaForThisTab.append(entry + "\n");
-                }
-            }
-        }
+        // Load log history from disk
+        loadLogHistory(indicatorName, areaForThisTab);
 
         JScrollPane scrollPane = new JScrollPane(areaForThisTab);
         scrollPane.setPreferredSize(new Dimension(400, 300));
         panel.add(scrollPane, BorderLayout.CENTER);
-
-        loadLogHistory(indicatorName, areaForThisTab);
 
         // Bottom panel buttons
         JPanel bottomPanel = new JPanel(new GridLayout(1, 2, 5, 5));
