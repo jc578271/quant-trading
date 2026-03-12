@@ -62,6 +62,7 @@ public class AlertListener implements
         int minWallSizeRemoved = 50;
         int minWallDur = 5;
         int aggWindowMs = 50;
+        int maxAggMs = 1000;
     }
 
     private final Map<String, InstrumentSettings> settingsMap = new ConcurrentHashMap<>();
@@ -83,6 +84,7 @@ public class AlertListener implements
         int buySize;
         int sellSize;
         long lastTime;
+        long startTime;
         double sumPriceSize; // To calculate VWAP of all trades in this window
 
         AggregatedTrade(String alias, double price, boolean isBuy, int size) {
@@ -96,6 +98,7 @@ public class AlertListener implements
             }
             this.sumPriceSize = price * size;
             this.lastTime = System.currentTimeMillis();
+            this.startTime = this.lastTime;
         }
 
         void add(double price, boolean isBuy, int size) {
@@ -353,8 +356,13 @@ public class AlertListener implements
             AggregatedTrade trade = entry.getValue();
 
             // If trade hasn't been updated for the configured window, flush it
+            // If trade hasn't been updated for the configured window (Idle Timeout)
+            // OR if it has been aggregating for too long (Max Duration), flush it
             InstrumentSettings settings = settingsMap.getOrDefault(trade.alias, defaultSettings);
-            if (now - trade.lastTime >= settings.aggWindowMs) {
+            boolean idleTimeout = now - trade.lastTime >= settings.aggWindowMs;
+            boolean maxDurationReached = now - trade.startTime >= settings.maxAggMs;
+
+            if (idleTimeout || maxDurationReached) {
                 int delta = trade.getDelta();
                 // Apply threshold to the absolute value of the net delta
                 if (Math.abs(delta) >= settings.minDotVol) {
@@ -514,50 +522,43 @@ public class AlertListener implements
 
         InstrumentSettings settings = settingsMap.computeIfAbsent(indicatorName, k -> new InstrumentSettings());
 
-        fgbc.gridx = 0;
-        fgbc.gridy = 0;
-        fgbc.weightx = 0.3;
+        // COLUMN 1: DOT SETTINGS (Left)
+        fgbc.gridx = 0; fgbc.gridy = 0; fgbc.weightx = 0.3;
         filterArea.add(new JLabel("Dot Vol:"), fgbc);
-        fgbc.gridx = 1;
-        fgbc.weightx = 0.7;
+        fgbc.gridx = 1; fgbc.gridy = 0; fgbc.weightx = 0.7;
         JTextField dotVolField = new JTextField(String.valueOf(settings.minDotVol), 4);
         filterArea.add(dotVolField, fgbc);
 
-        fgbc.gridx = 2;
-        fgbc.weightx = 0.3;
-        filterArea.add(new JLabel("Wall Dur(s):"), fgbc);
-        fgbc.gridx = 3;
-        fgbc.weightx = 0.7;
-        JTextField wallDurField = new JTextField(String.valueOf(settings.minWallDur), 4);
-        filterArea.add(wallDurField, fgbc);
+        fgbc.gridx = 0; fgbc.gridy = 1; fgbc.weightx = 0.3;
+        filterArea.add(new JLabel("Agg Win(ms):"), fgbc);
+        fgbc.gridx = 1; fgbc.gridy = 1; fgbc.weightx = 0.7;
+        JTextField aggWinField = new JTextField(String.valueOf(settings.aggWindowMs), 4);
+        filterArea.add(aggWinField, fgbc);
 
-        // Row 3 of Filters
-        fgbc.gridx = 0;
-        fgbc.gridy = 1;
-        fgbc.weightx = 0.3;
+        fgbc.gridx = 0; fgbc.gridy = 2; fgbc.weightx = 0.3;
+        filterArea.add(new JLabel("Max Dur(ms):"), fgbc);
+        fgbc.gridx = 1; fgbc.gridy = 2; fgbc.weightx = 0.7;
+        JTextField maxAggField = new JTextField(String.valueOf(settings.maxAggMs), 4);
+        filterArea.add(maxAggField, fgbc);
+
+        // COLUMN 2: WALL SETTINGS (Right)
+        fgbc.gridx = 2; fgbc.gridy = 0; fgbc.weightx = 0.3;
         filterArea.add(new JLabel("Wall Added:"), fgbc);
-        fgbc.gridx = 1;
-        fgbc.weightx = 0.7;
+        fgbc.gridx = 3; fgbc.gridy = 0; fgbc.weightx = 0.7;
         JTextField wallAddedField = new JTextField(String.valueOf(settings.minWallSizeAdded), 4);
         filterArea.add(wallAddedField, fgbc);
 
-        fgbc.gridx = 2;
-        fgbc.weightx = 0.3;
+        fgbc.gridx = 2; fgbc.gridy = 1; fgbc.weightx = 0.3;
         filterArea.add(new JLabel("Wall Removed:"), fgbc);
-        fgbc.gridx = 3;
-        fgbc.weightx = 0.7;
+        fgbc.gridx = 3; fgbc.gridy = 1; fgbc.weightx = 0.7;
         JTextField wallRemovedField = new JTextField(String.valueOf(settings.minWallSizeRemoved), 4);
         filterArea.add(wallRemovedField, fgbc);
 
-        // Row 4 of Filters
-        fgbc.gridx = 0;
-        fgbc.gridy = 2;
-        fgbc.weightx = 0.3;
-        filterArea.add(new JLabel("Agg Win(ms):"), fgbc);
-        fgbc.gridx = 1;
-        fgbc.weightx = 0.7;
-        JTextField aggWinField = new JTextField(String.valueOf(settings.aggWindowMs), 4);
-        filterArea.add(aggWinField, fgbc);
+        fgbc.gridx = 2; fgbc.gridy = 2; fgbc.weightx = 0.3;
+        filterArea.add(new JLabel("Wall Dur(s):"), fgbc);
+        fgbc.gridx = 3; fgbc.gridy = 2; fgbc.weightx = 0.7;
+        JTextField wallDurField = new JTextField(String.valueOf(settings.minWallDur), 4);
+        filterArea.add(wallDurField, fgbc);
 
         gbc.gridx = 0;
         gbc.gridy = 2;
@@ -575,11 +576,12 @@ public class AlertListener implements
                 settings.minWallSizeRemoved = Integer.parseInt(wallRemovedField.getText().trim());
                 settings.minWallDur = Integer.parseInt(wallDurField.getText().trim());
                 settings.aggWindowMs = Integer.parseInt(aggWinField.getText().trim());
+                settings.maxAggMs = Integer.parseInt(maxAggField.getText().trim());
                 saveConfig();
                 logToUI(indicatorName,
                         "SYSTEM: Filters saved for " + indicatorName + ". Dot:" + settings.minDotVol + " Added:"
                                 + settings.minWallSizeAdded + " Removed:" + settings.minWallSizeRemoved + " Dur:"
-                                + settings.minWallDur + "s Agg:" + settings.aggWindowMs + "ms");
+                                + settings.minWallDur + "s Agg:" + settings.aggWindowMs + "ms MaxDur:" + settings.maxAggMs + "ms");
             } catch (NumberFormatException ex) {
                 logToUI(indicatorName, "ERROR: Invalid filter values for " + indicatorName + ". Please enter numbers.");
             }
@@ -673,6 +675,7 @@ public class AlertListener implements
                     s.minWallSizeRemoved = Integer.parseInt(prop.getProperty(alias + ".minWallSizeRemoved", "50"));
                     s.minWallDur = Integer.parseInt(prop.getProperty(alias + ".minWallDur", "5"));
                     s.aggWindowMs = Integer.parseInt(prop.getProperty(alias + ".aggWindowMs", "50"));
+                    s.maxAggMs = Integer.parseInt(prop.getProperty(alias + ".maxAggMs", "1000"));
                     settingsMap.put(alias, s);
                 }
 
@@ -694,6 +697,7 @@ public class AlertListener implements
                 prop.setProperty(alias + ".minWallSizeRemoved", String.valueOf(s.minWallSizeRemoved));
                 prop.setProperty(alias + ".minWallDur", String.valueOf(s.minWallDur));
                 prop.setProperty(alias + ".aggWindowMs", String.valueOf(s.aggWindowMs));
+                prop.setProperty(alias + ".maxAggMs", String.valueOf(s.maxAggMs));
             }
             prop.store(output, null);
         } catch (IOException io) {
