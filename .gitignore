@@ -1,2 +1,7 @@
 *.csv
 __pycache__
+
+# Tradefinder
+tradefinder-src-ttw/
+tradefinder-src/
+tradefinder-extract/

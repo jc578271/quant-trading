@@ -12,6 +12,7 @@ import velox.api.layer1.messages.Layer1ApiSoundAlertMessage;
 import velox.api.layer1.Layer1ApiDataListener;
 import velox.api.layer1.data.MarketMode;
 import velox.api.layer1.data.TradeInfo;
+import velox.api.layer1.layers.utils.OrderBook;
 
 import javax.swing.*;
 import java.awt.*;
@@ -47,9 +48,10 @@ public class AlertListener implements
     private static final int PORT = 5555;
     private final Object socketLock = new Object();
 
-
-    // DOM State Tracking: alias -> isBid -> price -> size
-    private final Map<String, Map<Boolean, Map<Integer, Integer>>> domState = new ConcurrentHashMap<>();
+    // DOM State Tracking: alias -> OrderBook
+    // Note: Bookmap automatically backfills historical data from the chart into
+    // onDepth/onTrade when the addon starts.
+    private final Map<String, OrderBook> domState = new ConcurrentHashMap<>();
 
     // Files for persistence
     private final File configFile;
@@ -73,9 +75,22 @@ public class AlertListener implements
     private final Map<String, AggregatedTrade> tradeBuffer = new ConcurrentHashMap<>();
 
     // Wall tracking: Key = alias + side + price
-    private final Map<String, Long> wallFirstSeen = new ConcurrentHashMap<>();
-    private final Map<String, Boolean> wallLogged = new ConcurrentHashMap<>();
-    private final Map<String, Integer> accumulatedAdded = new ConcurrentHashMap<>();
+    private static class WallState {
+        String alias;
+        boolean isBid;
+        int price;
+        long firstSeenTime = 0;
+        int accumulatedSize = 0;
+        int currentDomSize = 0;
+        boolean isLogged = false;
+
+        WallState(String alias, boolean isBid, int price) {
+            this.alias = alias;
+            this.isBid = isBid;
+            this.price = price;
+        }
+    }
+    private final Map<String, WallState> wallStates = new ConcurrentHashMap<>();
 
     private static class AggregatedTrade {
         String alias;
@@ -87,7 +102,7 @@ public class AlertListener implements
         long startTime;
         double sumPriceSize; // To calculate VWAP of all trades in this window
 
-        AggregatedTrade(String alias, double price, boolean isBuy, int size) {
+        AggregatedTrade(String alias, double price, boolean isBuy, int size, long currentTimeMs) {
             this.alias = alias;
             this.minPrice = price;
             this.maxPrice = price;
@@ -97,11 +112,11 @@ public class AlertListener implements
                 this.sellSize = size;
             }
             this.sumPriceSize = price * size;
-            this.lastTime = System.currentTimeMillis();
-            this.startTime = this.lastTime;
+            this.lastTime = currentTimeMs;
+            this.startTime = currentTimeMs;
         }
 
-        void add(double price, boolean isBuy, int size) {
+        void add(double price, boolean isBuy, int size, long currentTimeMs) {
             if (isBuy) {
                 this.buySize += size;
             } else {
@@ -110,7 +125,7 @@ public class AlertListener implements
             this.sumPriceSize += price * size;
             this.minPrice = Math.min(this.minPrice, price);
             this.maxPrice = Math.max(this.maxPrice, price);
-            this.lastTime = System.currentTimeMillis();
+            this.lastTime = currentTimeMs;
         }
 
         int getTotalAbsSize() {
@@ -138,10 +153,17 @@ public class AlertListener implements
         loadConfig();
 
         // Start aggregation flusher (check every 10ms)
-        aggregationExecutor.scheduleAtFixedRate(this::flushTrades, 10, 10, TimeUnit.MILLISECONDS);
+        aggregationExecutor.scheduleAtFixedRate(() -> {
+            flushTrades();
+            checkWalls();
+        }, 10, 10, TimeUnit.MILLISECONDS);
 
         reconnectSocket();
         System.out.println("==============================");
+    }
+
+    private long getCurrentTimeMs() {
+        return provider.getCurrentTime() / 1_000_000L;
     }
 
     private void reconnectSocket() {
@@ -171,7 +193,8 @@ public class AlertListener implements
     }
 
     private String logToUI(String alias, String message) {
-        String time = ZonedDateTime.now(ZoneOffset.UTC).format(TIME_FMT);
+        long currentMs = getCurrentTimeMs();
+        String time = Instant.ofEpochMilli(currentMs).atZone(ZoneOffset.UTC).format(TIME_FMT);
         String fullMsg = "[" + time + "] " + message;
         updateUI(alias, fullMsg);
         appendLogToFile(alias, fullMsg);
@@ -179,7 +202,8 @@ public class AlertListener implements
     }
 
     private void appendLogToFile(String alias, String fullMsg) {
-        String fileName = alias == null ? "AlertListener_history_system.log" : "AlertListener_history_" + sanitize(alias) + ".log";
+        String fileName = alias == null ? "AlertListener_history_system.log"
+                : "AlertListener_history_" + sanitize(alias) + ".log";
         File file = new File(System.getProperty("user.home"), fileName);
         try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(file, true)))) {
             out.println(fullMsg);
@@ -215,26 +239,21 @@ public class AlertListener implements
 
     @Override
     public void onDepth(String alias, boolean isBid, int price, int size) {
-        // Initialize maps if needed
-        domState.computeIfAbsent(alias, k -> new ConcurrentHashMap<>());
-        domState.get(alias).computeIfAbsent(isBid, k -> new ConcurrentHashMap<>());
+        // Get or create OrderBook for this instrument
+        OrderBook orderBook = domState.computeIfAbsent(alias, k -> new OrderBook());
 
-        Map<Integer, Integer> priceLevels = domState.get(alias).get(isBid);
-        Integer prevSize = priceLevels.getOrDefault(price, 0);
+        // Get previous size before update
+        long prevSize = orderBook.getSizeFor(isBid, price);
 
-        // Detect Add/Remove for general DOM events
+        // Update the OrderBook state using the correct Bookmap utility method
+        orderBook.onUpdate(isBid, price, size);
+
+        // Detect Add/Remove for general DOM events (size is now the NEW size)
         String action = null;
         if (prevSize == 0 && size > 0) {
             action = "add";
         } else if (prevSize > 0 && size == 0) {
             action = "remove";
-        }
-
-        // Update state
-        if (size == 0) {
-            priceLevels.remove(price);
-        } else {
-            priceLevels.put(price, size);
         }
 
         // Send to Socket if action detected (simple add/remove to new price level)
@@ -244,63 +263,35 @@ public class AlertListener implements
 
         // Logic for Liquidity Wall Detection
         String wallKey = alias + (isBid ? "BID" : "ASK") + price;
-        int delta = size - prevSize;
+        int delta = (int) (size - prevSize);
 
         InstrumentSettings settings = settingsMap.getOrDefault(alias, defaultSettings);
 
-        // Track cumulative additions (Delta: Adds - Pulls/Trades)
-        accumulatedAdded.merge(wallKey, delta, Integer::sum);
-        if (accumulatedAdded.getOrDefault(wallKey, 0) < 0) {
-            accumulatedAdded.put(wallKey, 0);
-        }
+        WallState state = wallStates.computeIfAbsent(wallKey, k -> new WallState(alias, isBid, price));
+        synchronized (state) {
+            state.accumulatedSize += delta;
+            if (state.accumulatedSize < 0) {
+                state.accumulatedSize = 0;
+            }
+            state.currentDomSize = size;
 
-        int currentAccumulated = accumulatedAdded.getOrDefault(wallKey, 0);
-
-        // Wall Addition Detection: Threshold reached and some liquidity exists
-        if (currentAccumulated >= settings.minWallSizeAdded && size > 0) {
-            long currentTime = System.currentTimeMillis();
-            // Start duration timer only after accumulation threshold is met
-            Long firstSeen = wallFirstSeen.putIfAbsent(wallKey, currentTime);
-            if (firstSeen == null) {
-                firstSeen = currentTime;
+            // Wall Addition Detection: Threshold reached and some liquidity exists
+            if (state.accumulatedSize >= settings.minWallSizeAdded && size > 0) {
+                if (state.firstSeenTime == 0) {
+                    state.firstSeenTime = getCurrentTimeMs();
+                }
             }
 
-            long elapsed = (currentTime - firstSeen) / 1000;
-            if (elapsed >= settings.minWallDur && !wallLogged.getOrDefault(wallKey, false)) {
-                String wallMsg = String.format(
-                        "[WALL ADDED] %s | %s | Price: %d | Size: %d | Net Added: %d | Dur: %ds",
-                        alias, isBid ? "BID" : "ASK", price, size, currentAccumulated, elapsed);
-                logToUI(alias, wallMsg);
-                sendWallEvent("added", alias, isBid, price, size, elapsed);
-                wallLogged.put(wallKey, true);
+            // Wall Removal Detection: size drops below threshold
+            if (size < settings.minWallSizeRemoved) {
+                if (state.isLogged) {
+                    String wallMsg = String.format("[WALL REMOVED] %s | %s | Price: %d | Current Size: %d | Threshold: %d",
+                            alias, isBid ? "BID" : "ASK", price, size, settings.minWallSizeRemoved);
+                    logToUI(alias, wallMsg);
+                    sendWallEvent("removed", alias, isBid, price, size, 0);
+                }
+                wallStates.remove(wallKey);
             }
-        }
-
-        // Wall Removal Detection: size drops below threshold
-        if (size < settings.minWallSizeRemoved) {
-            if (wallLogged.getOrDefault(wallKey, false)) {
-                String wallMsg = String.format("[WALL REMOVED] %s | %s | Price: %d | Current Size: %d | Threshold: %d",
-                        alias, isBid ? "BID" : "ASK", price, size, settings.minWallSizeRemoved);
-                logToUI(alias, wallMsg);
-                sendWallEvent("removed", alias, isBid, price, size, 0);
-
-                // Reset all tracking state for this wall
-                wallFirstSeen.remove(wallKey);
-                wallLogged.remove(wallKey);
-                accumulatedAdded.remove(wallKey);
-            } else {
-                // If it wasn't a wall yet, just reset the duration timer if liquidity drops too
-                // low
-                // but keep the accumulation (cộng dồn) unless it goes to 0
-                wallFirstSeen.remove(wallKey);
-            }
-        }
-
-        // If liquidity is completely removed, ensure all tracking is reset
-        if (size == 0) {
-            wallFirstSeen.remove(wallKey);
-            wallLogged.remove(wallKey);
-            accumulatedAdded.remove(wallKey);
         }
     }
 
@@ -332,43 +323,72 @@ public class AlertListener implements
 
     @Override
     public void onTrade(String alias, double price, int size, TradeInfo tradeInfo) {
-        // Inverting logic: If user sees red as buy, we must swap.
-        // In many Bookmap configurations, true means Aggressor Buy.
+        // Bookmap API definition: isBidAggressor actually means the BUYER was the aggressor (Green Bubble).
+        // When tradeInfo.isBidAggressor is true, it represents a BUY order.
         boolean isBuy = tradeInfo.isBidAggressor;
         // Aggregation is now per-alias only to calculate Delta
         String key = alias;
+        long currentMs = getCurrentTimeMs();
 
         tradeBuffer.compute(key, (k, existing) -> {
             if (existing == null) {
-                return new AggregatedTrade(alias, price, isBuy, size);
+                return new AggregatedTrade(alias, price, isBuy, size, currentMs);
             } else {
-                existing.add(price, isBuy, size);
+                existing.add(price, isBuy, size, currentMs);
                 return existing;
             }
         });
     }
 
-    private void flushTrades() {
-        long now = System.currentTimeMillis();
-        Iterator<Map.Entry<String, AggregatedTrade>> it = tradeBuffer.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<String, AggregatedTrade> entry = it.next();
-            AggregatedTrade trade = entry.getValue();
+    private void checkWalls() {
+        long now = getCurrentTimeMs();
+        for (WallState state : wallStates.values()) {
+            synchronized (state) {
+                if (state.firstSeenTime > 0 && !state.isLogged) {
+                    InstrumentSettings settings = settingsMap.getOrDefault(state.alias, defaultSettings);
+                    
+                    // Prevent race condition (state removed concurrently by onDepth)
+                    if (state.currentDomSize < settings.minWallSizeRemoved) {
+                        continue;
+                    }
 
-            // If trade hasn't been updated for the configured window, flush it
-            // If trade hasn't been updated for the configured window (Idle Timeout)
-            // OR if it has been aggregating for too long (Max Duration), flush it
-            InstrumentSettings settings = settingsMap.getOrDefault(trade.alias, defaultSettings);
-            boolean idleTimeout = now - trade.lastTime >= settings.aggWindowMs;
-            boolean maxDurationReached = now - trade.startTime >= settings.maxAggMs;
-
-            if (idleTimeout || maxDurationReached) {
-                int delta = trade.getDelta();
-                // Apply threshold to the absolute value of the net delta
-                if (Math.abs(delta) >= settings.minDotVol) {
-                    processFlush(trade, delta);
+                    long elapsedSeconds = (now - state.firstSeenTime) / 1000;
+                    if (elapsedSeconds >= settings.minWallDur) {
+                        state.isLogged = true;
+                        String wallMsg = String.format(
+                                "[WALL ADDED] %s | %s | Price: %d | Size: %d | Net Added: %d | Dur: %ds",
+                                state.alias, state.isBid ? "BID" : "ASK", state.price, state.currentDomSize, state.accumulatedSize, elapsedSeconds);
+                        logToUI(state.alias, wallMsg);
+                        sendWallEvent("added", state.alias, state.isBid, state.price, state.currentDomSize, elapsedSeconds);
+                    }
                 }
-                it.remove();
+            }
+        }
+    }
+
+    private void flushTrades() {
+        long now = getCurrentTimeMs();
+        java.util.List<AggregatedTrade> readyToFlush = new ArrayList<>();
+
+        for (String key : tradeBuffer.keySet()) {
+            tradeBuffer.computeIfPresent(key, (k, trade) -> {
+                InstrumentSettings settings = settingsMap.getOrDefault(trade.alias, defaultSettings);
+                boolean idleTimeout = now - trade.lastTime >= settings.aggWindowMs;
+                boolean maxDurationReached = now - trade.startTime >= settings.maxAggMs;
+
+                if (idleTimeout || maxDurationReached) {
+                    readyToFlush.add(trade);
+                    return null; // Atomic remove
+                }
+                return trade;
+            });
+        }
+
+        for (AggregatedTrade trade : readyToFlush) {
+            InstrumentSettings settings = settingsMap.getOrDefault(trade.alias, defaultSettings);
+            // Apply threshold to the TOTAL volume of the bubble, as is standard
+            if (trade.getTotalAbsSize() >= settings.minDotVol) {
+                processFlush(trade, trade.getDelta());
             }
         }
     }
@@ -382,9 +402,10 @@ public class AlertListener implements
             priceStr = String.format("%.2f-%.2f (Avg: %.2f)", trade.minPrice, trade.maxPrice, trade.getVwap());
         }
 
+        String direction = delta > 0 ? "BUY" : (delta < 0 ? "SELL" : "NEUTRAL");
         boolean isNetBuy = delta > 0;
         String dotMsg = String.format("[DOT] %s | %s | Price: %s | Delta: %+d | (B:%d S:%d)",
-                trade.alias, isNetBuy ? "BUY" : "SELL", priceStr, delta, trade.buySize, trade.sellSize);
+                trade.alias, direction, priceStr, delta, trade.buySize, trade.sellSize);
         logToUI(trade.alias, dotMsg);
         sendDotEvent(trade.alias, isNetBuy, trade.getVwap(), Math.abs(delta));
     }
@@ -443,7 +464,8 @@ public class AlertListener implements
                 java.util.List<String> logs = alertLogsMap.computeIfAbsent(alias, k -> new ArrayList<>());
                 synchronized (logs) {
                     logs.add(timestampedMsg);
-                    if (logs.size() > MAX_LOG_LINES) logs.remove(0);
+                    if (logs.size() > MAX_LOG_LINES)
+                        logs.remove(0);
                 }
             }
         }
@@ -453,7 +475,8 @@ public class AlertListener implements
                 .filter(a -> textLower.contains(a.toLowerCase()) || textLower.contains(a.toLowerCase().split("\\.")[0]))
                 .findFirst().orElse("Unknown");
 
-        String timeStr = ZonedDateTime.now(ZoneOffset.UTC).format(TIME_FMT);
+        long currentMs = getCurrentTimeMs();
+        String timeStr = Instant.ofEpochMilli(currentMs).atZone(ZoneOffset.UTC).format(TIME_FMT);
         exportAlert(timeStr, alertCount, firstMatchedAlias, text, alert.showPopup);
     }
 
@@ -523,40 +546,64 @@ public class AlertListener implements
         InstrumentSettings settings = settingsMap.computeIfAbsent(indicatorName, k -> new InstrumentSettings());
 
         // COLUMN 1: DOT SETTINGS (Left)
-        fgbc.gridx = 0; fgbc.gridy = 0; fgbc.weightx = 0.3;
+        fgbc.gridx = 0;
+        fgbc.gridy = 0;
+        fgbc.weightx = 0.3;
         filterArea.add(new JLabel("Dot Vol:"), fgbc);
-        fgbc.gridx = 1; fgbc.gridy = 0; fgbc.weightx = 0.7;
+        fgbc.gridx = 1;
+        fgbc.gridy = 0;
+        fgbc.weightx = 0.7;
         JTextField dotVolField = new JTextField(String.valueOf(settings.minDotVol), 4);
         filterArea.add(dotVolField, fgbc);
 
-        fgbc.gridx = 0; fgbc.gridy = 1; fgbc.weightx = 0.3;
+        fgbc.gridx = 0;
+        fgbc.gridy = 1;
+        fgbc.weightx = 0.3;
         filterArea.add(new JLabel("Agg Win(ms):"), fgbc);
-        fgbc.gridx = 1; fgbc.gridy = 1; fgbc.weightx = 0.7;
+        fgbc.gridx = 1;
+        fgbc.gridy = 1;
+        fgbc.weightx = 0.7;
         JTextField aggWinField = new JTextField(String.valueOf(settings.aggWindowMs), 4);
         filterArea.add(aggWinField, fgbc);
 
-        fgbc.gridx = 0; fgbc.gridy = 2; fgbc.weightx = 0.3;
+        fgbc.gridx = 0;
+        fgbc.gridy = 2;
+        fgbc.weightx = 0.3;
         filterArea.add(new JLabel("Max Dur(ms):"), fgbc);
-        fgbc.gridx = 1; fgbc.gridy = 2; fgbc.weightx = 0.7;
+        fgbc.gridx = 1;
+        fgbc.gridy = 2;
+        fgbc.weightx = 0.7;
         JTextField maxAggField = new JTextField(String.valueOf(settings.maxAggMs), 4);
         filterArea.add(maxAggField, fgbc);
 
         // COLUMN 2: WALL SETTINGS (Right)
-        fgbc.gridx = 2; fgbc.gridy = 0; fgbc.weightx = 0.3;
+        fgbc.gridx = 2;
+        fgbc.gridy = 0;
+        fgbc.weightx = 0.3;
         filterArea.add(new JLabel("Wall Added:"), fgbc);
-        fgbc.gridx = 3; fgbc.gridy = 0; fgbc.weightx = 0.7;
+        fgbc.gridx = 3;
+        fgbc.gridy = 0;
+        fgbc.weightx = 0.7;
         JTextField wallAddedField = new JTextField(String.valueOf(settings.minWallSizeAdded), 4);
         filterArea.add(wallAddedField, fgbc);
 
-        fgbc.gridx = 2; fgbc.gridy = 1; fgbc.weightx = 0.3;
+        fgbc.gridx = 2;
+        fgbc.gridy = 1;
+        fgbc.weightx = 0.3;
         filterArea.add(new JLabel("Wall Removed:"), fgbc);
-        fgbc.gridx = 3; fgbc.gridy = 1; fgbc.weightx = 0.7;
+        fgbc.gridx = 3;
+        fgbc.gridy = 1;
+        fgbc.weightx = 0.7;
         JTextField wallRemovedField = new JTextField(String.valueOf(settings.minWallSizeRemoved), 4);
         filterArea.add(wallRemovedField, fgbc);
 
-        fgbc.gridx = 2; fgbc.gridy = 2; fgbc.weightx = 0.3;
+        fgbc.gridx = 2;
+        fgbc.gridy = 2;
+        fgbc.weightx = 0.3;
         filterArea.add(new JLabel("Wall Dur(s):"), fgbc);
-        fgbc.gridx = 3; fgbc.gridy = 2; fgbc.weightx = 0.7;
+        fgbc.gridx = 3;
+        fgbc.gridy = 2;
+        fgbc.weightx = 0.7;
         JTextField wallDurField = new JTextField(String.valueOf(settings.minWallDur), 4);
         filterArea.add(wallDurField, fgbc);
 
@@ -581,7 +628,8 @@ public class AlertListener implements
                 logToUI(indicatorName,
                         "SYSTEM: Filters saved for " + indicatorName + ". Dot:" + settings.minDotVol + " Added:"
                                 + settings.minWallSizeAdded + " Removed:" + settings.minWallSizeRemoved + " Dur:"
-                                + settings.minWallDur + "s Agg:" + settings.aggWindowMs + "ms MaxDur:" + settings.maxAggMs + "ms");
+                                + settings.minWallDur + "s Agg:" + settings.aggWindowMs + "ms MaxDur:"
+                                + settings.maxAggMs + "ms");
             } catch (NumberFormatException ex) {
                 logToUI(indicatorName, "ERROR: Invalid filter values for " + indicatorName + ". Please enter numbers.");
             }
@@ -625,7 +673,8 @@ public class AlertListener implements
             areaForThisTab.setText("");
 
             // Clear disk (delete the file)
-            File file = new File(System.getProperty("user.home"), "AlertListener_history_" + sanitize(indicatorName) + ".log");
+            File file = new File(System.getProperty("user.home"),
+                    "AlertListener_history_" + sanitize(indicatorName) + ".log");
             if (file.exists()) {
                 file.delete();
             }
@@ -706,8 +755,10 @@ public class AlertListener implements
     }
 
     private void loadLogHistory(String alias, JTextArea area) {
-        // 1. Load instrument specific logs ONLY (Internal system logs are managed separately)
-        File instrumentFile = new File(System.getProperty("user.home"), "AlertListener_history_" + sanitize(alias) + ".log");
+        // 1. Load instrument specific logs ONLY (Internal system logs are managed
+        // separately)
+        File instrumentFile = new File(System.getProperty("user.home"),
+                "AlertListener_history_" + sanitize(alias) + ".log");
         loadLines(instrumentFile, area);
     }
 
