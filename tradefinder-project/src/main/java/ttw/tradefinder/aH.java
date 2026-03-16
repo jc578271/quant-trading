@@ -122,7 +122,7 @@ Layer1ApiTradingAdapter {
         aH a2;
         a2.G = true;
         a2.e = false;
-        a2.A();
+        a2.unregisterListeners();
         a2.f();
     }
 
@@ -220,12 +220,12 @@ Layer1ApiTradingAdapter {
                 }
             }
         }
-        if (!a4.A()) {
-            a4.A();
+        if (!a4.hasActiveListeners()) {
+            a4.unregisterListeners();
         }
     }
 
-    private /* synthetic */ void A() {
+    private /* synthetic */ void unregisterListeners() {
         aH a2;
         if (!a2.e) {
             return;
@@ -264,7 +264,7 @@ Layer1ApiTradingAdapter {
         }
     }
 
-    private /* synthetic */ boolean A() {
+    private /* synthetic */ boolean hasActiveListeners() {
         aH a2;
         Object object = a2.m;
         synchronized (object) {
@@ -301,7 +301,7 @@ Layer1ApiTradingAdapter {
 
     public void A(String a2, w a3) {
         aH a4;
-        if (!a4.A()) {
+        if (!a4.hasActiveListeners()) {
             a4.I();
         }
         if (!a4.e) {
@@ -395,8 +395,8 @@ Layer1ApiTradingAdapter {
                 a3.I.get(a2).clear();
             }
         }
-        if (!a3.A()) {
-            a3.A();
+        if (!a3.hasActiveListeners()) {
+            a3.unregisterListeners();
         }
     }
 }

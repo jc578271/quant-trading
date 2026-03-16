@@ -17,11 +17,11 @@ import ttw.tradefinder.sD;
 public interface ba {
     public String I();
 
-    public dD A();
+    public dD A_ret_dD();
 
-    public void A();
+    public void A_ret_void();
 
-    public sD A();
+    public sD A_ret_sD();
 
     public void A(dD var1);
 
@@ -37,8 +37,8 @@ public interface ba {
 
     public void A(String var1);
 
-    public String A();
+    public String A_ret_String();
 
-    public boolean A();
+    public boolean A_ret_boolean();
 }
 

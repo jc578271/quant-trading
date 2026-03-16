@@ -148,10 +148,10 @@ extends Nc {
     private /* synthetic */ void f(JRadioButton a2, String a3) {
         int n2;
         yE a4;
-        if (a4.e.A() == sD.F) {
+        if (a4.e.A_ret_sD() == sD.F) {
             a4.e.A(sD.i);
         }
-        String string = jF.A((sD)a4.e.A());
+        String string = jF.A((sD)a4.e.A_ret_sD());
         String[] stringArray = jF.A((sD)sD.F, (boolean)true).toArray(new String[0]);
         JComboBox<String> jComboBox = new JComboBox<String>(stringArray);
         int n3 = stringArray.length;
@@ -170,7 +170,7 @@ extends Nc {
 
     private /* synthetic */ void k() {
         yE a2;
-        dD dD2 = a2.e.A();
+        dD dD2 = a2.e.A_ret_dD();
         if (dD2 == dD.k) {
             a2.I.setSelected(true);
             return;
@@ -214,7 +214,7 @@ extends Nc {
     private /* synthetic */ void B() {
         yE a2;
         JCheckBox jCheckBox = new JCheckBox(WE.A((Object)"w\u0000RDF\u0016_\u0007SDB\u000b\u0016%R\u0012W\nU\u0001RKt\u0005E\rUDE\u000bC\nR\u0017"));
-        jCheckBox.setSelected(a2.e.A());
+        jCheckBox.setSelected(a2.e.A_ret_boolean());
         JCheckBox jCheckBox2 = jCheckBox;
         jCheckBox2.addItemListener((ItemListener)new Uf(a2, jCheckBox));
         a2.f((Component)jCheckBox2);
@@ -230,7 +230,7 @@ extends Nc {
     private /* synthetic */ void f(String a2) {
         yE a3;
         a2 = new JLabel((String)a2, 2);
-        Serializable serializable = new File(a3.e.A());
+        Serializable serializable = new File(a3.e.A_ret_String());
         if (serializable.exists()) {
             ((JLabel)a2).setText("Bid - " + serializable.getName());
             ((JComponent)a2).setToolTipText(serializable.getAbsolutePath());

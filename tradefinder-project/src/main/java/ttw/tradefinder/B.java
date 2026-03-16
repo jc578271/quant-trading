@@ -45,6 +45,6 @@ public interface B {
 
     public void A(int var1, int var2, int var3, int var4, int var5, Graphics2D var6);
 
-    public int A(int var1);
+    public int A_ret_int(int var1);
 }
 

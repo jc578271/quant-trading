@@ -22,9 +22,9 @@ import ttw.tradefinder.yC;
 public interface O {
     public void A(Kc var1);
 
-    public yC A();
+    public yC A_ret_yC();
 
-    public CB A();
+    public CB A_ret_CB();
 
     public int a();
 
@@ -32,11 +32,11 @@ public interface O {
 
     public void A(CB var1);
 
-    public Kc A();
+    public Kc A_ret_Kc();
 
     public void f(int var1);
 
-    public JC A();
+    public JC A_ret_JC();
 
     public void A(TB var1);
 
@@ -46,14 +46,14 @@ public interface O {
 
     public void A(JC var1);
 
-    public gC A();
+    public gC A_ret_gC();
 
     public void A(int var1);
 
     public void A(yC var1);
 
-    public int A();
+    public int A_ret_int();
 
-    public TB A();
+    public TB A_ret_TB();
 }
 
