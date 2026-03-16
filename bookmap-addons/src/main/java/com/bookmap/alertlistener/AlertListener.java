@@ -23,6 +23,8 @@ import java.net.Socket;
 import java.nio.file.*;
 import java.time.format.DateTimeFormatter;
 import java.time.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Layer1Attachable
 @Layer1StrategyName("Alert Listener")
@@ -40,6 +42,48 @@ public class AlertListener implements
     private int alertCount = 0;
     private static final int MAX_LOG_LINES = 500;
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSSS'Z'");
+    static final String CSV_HEADER = String.join(",",
+            "timestamp",
+            "alias",
+            "type",
+            "side",
+            "price",
+            "value",
+            "price_min",
+            "price_max",
+            "bid_size",
+            "ask_size",
+            "duration_sec",
+            "raw_text");
+
+    private static final Pattern ALERT_SOURCE_PREFIX_PATTERN = Pattern.compile("^(?:([^:]+):\\s+)?(.+)$");
+    private static final Pattern HIDDEN_DEVELOPMENT_PATTERN = Pattern.compile(
+            "^HIDDEN\\s+(BID|ASK)\\s+DEVELOPMENT,\\s+V:\\s*([-+]?[0-9]+(?:\\.[0-9]+)?)\\s+at\\s+([-+]?[0-9]+(?:\\.[0-9]+)?)$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern HIDDEN_N_PATTERN = Pattern.compile(
+            "^HIDDEN\\s+(BID|ASK)-N,\\s+V:\\s*([-+]?[0-9]+(?:\\.[0-9]+)?)(?:\\s*\\([^)]*\\))?\\s+at\\s+([-+]?[0-9]+(?:\\.[0-9]+)?)$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern ABSORPTION_PATTERN = Pattern.compile(
+            "^ABSORPTION\\s+(BUY|SELL),\\s+V:\\s*([-+]?[0-9]+(?:\\.[0-9]+)?)\\s+at\\s+([-+]?[0-9]+(?:\\.[0-9]+)?)$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern SWEEP_PATTERN = Pattern.compile(
+            "^SWEEP\\s+(BUY|SELL),\\s+V:\\s*([-+]?[0-9]+(?:\\.[0-9]+)?)(?:,\\s*P:\\s*[-+]?[0-9]+(?:\\.[0-9]+)?)?\\s+at\\s+([-+]?[0-9]+(?:\\.[0-9]+)?)$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern IMBALANCE_ZERO_CROSS_PATTERN = Pattern.compile(
+            "^Imbalance\\s+(BID|ASK)\\s+zero-cross\\s+at\\s+([-+]?[0-9]+(?:\\.[0-9]+)?)$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern IMBALANCE_RATIO_PATTERN = Pattern.compile(
+            "^Imbalance\\s+(BID|ASK)\\s+([-+]?[0-9]+)%\\s*>\\s*(?:BID|ASK)\\s+at\\s+([-+]?[0-9]+(?:\\.[0-9]+)?)$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern STOP_PATTERN = Pattern.compile(
+            "^Stop\\s+.+?\\s+(buy|sell)\\s+at\\s+([-+]?[0-9]+(?:\\.[0-9]+)?)\\s+volume\\s+([-+]?[0-9]+(?:\\.[0-9]+)?)(?:\\s+\\[POPUP\\])?$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern MARKET_VOLUME_STOP_PATTERN = Pattern.compile(
+            "^Market\\s+Volume\\s+Stop\\s+(BUY|SELL)\\s+of\\s+([-+]?[0-9]+(?:\\.[0-9]+)?)\\s+reached\\s+at\\s+([-+]?[0-9]+(?:\\.[0-9]+)?)$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern INCONSISTENT_MBO_PATTERN = Pattern.compile(
+            "^Inconsistent\\s+MBO\\s+data.*$",
+            Pattern.CASE_INSENSITIVE);
 
     // Socket for Python AI Analyzer
     private Socket socket;
@@ -55,7 +99,7 @@ public class AlertListener implements
 
     // Files for persistence
     private final File configFile;
-    // history files are now per-alias: AlertListener_history_[alias].log
+    // history files are now per-alias: AlertListener_history_[alias].csv
 
     // Per-instrument settings
     private static class InstrumentSettings {
@@ -92,35 +136,35 @@ public class AlertListener implements
     }
     private final Map<String, WallState> wallStates = new ConcurrentHashMap<>();
 
-    private static class AggregatedTrade {
+    static class AggregatedTrade {
         String alias;
         double minPrice;
         double maxPrice;
-        int buySize;
-        int sellSize;
+        int bidSize;
+        int askSize;
         long lastTime;
         long startTime;
         double sumPriceSize; // To calculate VWAP of all trades in this window
 
-        AggregatedTrade(String alias, double price, boolean isBuy, int size, long currentTimeMs) {
+        AggregatedTrade(String alias, double price, boolean isBidAggressor, int size, long currentTimeMs) {
             this.alias = alias;
             this.minPrice = price;
             this.maxPrice = price;
-            if (isBuy) {
-                this.buySize = size;
+            if (isBidAggressor) {
+                this.bidSize = size;
             } else {
-                this.sellSize = size;
+                this.askSize = size;
             }
             this.sumPriceSize = price * size;
             this.lastTime = currentTimeMs;
             this.startTime = currentTimeMs;
         }
 
-        void add(double price, boolean isBuy, int size, long currentTimeMs) {
-            if (isBuy) {
-                this.buySize += size;
+        void add(double price, boolean isBidAggressor, int size, long currentTimeMs) {
+            if (isBidAggressor) {
+                this.bidSize += size;
             } else {
-                this.sellSize += size;
+                this.askSize += size;
             }
             this.sumPriceSize += price * size;
             this.minPrice = Math.min(this.minPrice, price);
@@ -129,17 +173,32 @@ public class AlertListener implements
         }
 
         int getTotalAbsSize() {
-            return buySize + sellSize;
+            return bidSize + askSize;
         }
 
         int getDelta() {
-            return buySize - sellSize;
+            return askSize - bidSize;
         }
 
         double getVwap() {
             int total = getTotalAbsSize();
             return total == 0 ? 0 : sumPriceSize / total;
         }
+    }
+
+    static class CsvLogRow {
+        String timestamp = "";
+        String alias = "";
+        String type = "";
+        String side = "";
+        String price = "";
+        String value = "";
+        String priceMin = "";
+        String priceMax = "";
+        String bidSize = "";
+        String askSize = "";
+        String durationSec = "";
+        String rawText = "";
     }
 
     public AlertListener(Layer1ApiProvider provider) {
@@ -193,20 +252,22 @@ public class AlertListener implements
     }
 
     private String logToUI(String alias, String message) {
-        long currentMs = getCurrentTimeMs();
-        String time = Instant.ofEpochMilli(currentMs).atZone(ZoneOffset.UTC).format(TIME_FMT);
-        String fullMsg = "[" + time + "] " + message;
-        updateUI(alias, fullMsg);
-        appendLogToFile(alias, fullMsg);
-        return fullMsg;
+        return logCsvRow(alias, createSystemCsvRow(currentTimestamp(), alias, message));
     }
 
-    private void appendLogToFile(String alias, String fullMsg) {
-        String fileName = alias == null ? "AlertListener_history_system.log"
-                : "AlertListener_history_" + sanitize(alias) + ".log";
+    private String logCsvRow(String alias, CsvLogRow row) {
+        String csvLine = toCsvLine(row);
+        updateUI(alias, csvLine);
+        appendLogToFile(alias, csvLine);
+        return csvLine;
+    }
+
+    private void appendLogToFile(String alias, String csvLine) {
+        String fileName = alias == null ? "AlertListener_history_system.csv"
+                : "AlertListener_history_" + sanitize(alias) + ".csv";
         File file = new File(System.getProperty("user.home"), fileName);
-        try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(file, true)))) {
-            out.println(fullMsg);
+        try {
+            appendCsvLine(file, csvLine);
         } catch (IOException e) {
             System.err.println("Error writing to history log (" + fileName + "): " + e.getMessage());
         }
@@ -235,6 +296,243 @@ public class AlertListener implements
                 countLabel.setText("Total Alerts: " + alertCount);
             }
         });
+    }
+
+    private String currentTimestamp() {
+        long currentMs = getCurrentTimeMs();
+        return Instant.ofEpochMilli(currentMs).atZone(ZoneOffset.UTC).format(TIME_FMT);
+    }
+
+    static CsvLogRow createSystemCsvRow(String timestamp, String alias, String message) {
+        CsvLogRow row = new CsvLogRow();
+        row.timestamp = nonNull(timestamp);
+        row.alias = nonNull(alias);
+        row.rawText = nonNull(message);
+
+        if (message != null && message.startsWith("ERROR:")) {
+            row.type = "ERROR";
+        } else if (message != null && message.startsWith("SYSTEM:")) {
+            row.type = "SYSTEM";
+        } else {
+            row.type = "INFO";
+        }
+        return row;
+    }
+
+    static CsvLogRow createDotCsvRow(String timestamp, AggregatedTrade trade) {
+        int dotDelta = trade.getDelta();
+        CsvLogRow row = new CsvLogRow();
+        row.timestamp = nonNull(timestamp);
+        row.alias = nonNull(trade.alias);
+        row.type = "DOT";
+        row.side = normalizeDotSide(dotDelta);
+        row.price = formatNumber(trade.getVwap());
+        row.value = String.valueOf(Math.abs(dotDelta));
+        row.priceMin = formatNumber(trade.minPrice);
+        row.priceMax = formatNumber(trade.maxPrice);
+        row.bidSize = String.valueOf(trade.bidSize);
+        row.askSize = String.valueOf(trade.askSize);
+        row.rawText = buildDotRawText(trade, dotDelta);
+        return row;
+    }
+
+    static CsvLogRow createWallCsvRow(String timestamp, String alias, boolean isBid, int price, int size, long durationSec,
+            String type, String rawText) {
+        CsvLogRow row = new CsvLogRow();
+        row.timestamp = nonNull(timestamp);
+        row.alias = nonNull(alias);
+        row.type = nonNull(type);
+        row.side = isBid ? "BID" : "ASK";
+        row.price = String.valueOf(price);
+        row.value = String.valueOf(size);
+        row.durationSec = durationSec > 0 ? String.valueOf(durationSec) : "";
+        row.rawText = nonNull(rawText);
+        return row;
+    }
+
+    static CsvLogRow parseAlertCsvRow(String timestamp, String alias, String text, boolean popup) {
+        CsvLogRow row = new CsvLogRow();
+        row.timestamp = nonNull(timestamp);
+        row.alias = nonNull(alias);
+        row.type = "UNKNOWN";
+        row.rawText = nonNull(text);
+
+        String body = text == null ? "" : text.trim();
+        Matcher sourceMatcher = ALERT_SOURCE_PREFIX_PATTERN.matcher(body);
+        if (sourceMatcher.matches()) {
+            String prefix = sourceMatcher.group(1);
+            String possibleBody = sourceMatcher.group(2);
+            if (prefix != null && prefix.matches("[A-Za-z0-9._@-]+")) {
+                body = possibleBody.trim();
+            }
+        }
+
+        if (fillAlertMatch(row, HIDDEN_DEVELOPMENT_PATTERN.matcher(body), "HIDDEN DEVELOPMENT", 1, 3, 2)) {
+            return row;
+        }
+        if (fillAlertMatch(row, HIDDEN_N_PATTERN.matcher(body), "HIDDEN", 1, 3, 2)) {
+            return row;
+        }
+        if (fillAlertMatch(row, ABSORPTION_PATTERN.matcher(body), "ABSORPTION", 1, 3, 2)) {
+            return row;
+        }
+        if (fillAlertMatch(row, SWEEP_PATTERN.matcher(body), "SWEEP", 1, 3, 2)) {
+            return row;
+        }
+
+        Matcher imbalanceZeroCross = IMBALANCE_ZERO_CROSS_PATTERN.matcher(body);
+        if (imbalanceZeroCross.matches()) {
+            row.type = "IMBALANCE ZERO-CROSS";
+            row.side = normalizeSide(imbalanceZeroCross.group(1));
+            row.price = imbalanceZeroCross.group(2);
+            return row;
+        }
+
+        Matcher imbalanceRatio = IMBALANCE_RATIO_PATTERN.matcher(body);
+        if (imbalanceRatio.matches()) {
+            row.type = "IMBALANCE RATIO";
+            row.side = normalizeSide(imbalanceRatio.group(1));
+            row.value = imbalanceRatio.group(2);
+            row.price = imbalanceRatio.group(3);
+            return row;
+        }
+
+        Matcher stopMatcher = STOP_PATTERN.matcher(body);
+        if (stopMatcher.matches()) {
+            row.type = "STOP";
+            row.side = normalizeSide(stopMatcher.group(1));
+            row.price = stopMatcher.group(2);
+            row.value = stopMatcher.group(3);
+            return row;
+        }
+
+        Matcher marketVolumeStop = MARKET_VOLUME_STOP_PATTERN.matcher(body);
+        if (marketVolumeStop.matches()) {
+            row.type = "MARKET VOLUME STOP";
+            row.side = normalizeSide(marketVolumeStop.group(1));
+            row.value = marketVolumeStop.group(2);
+            row.price = marketVolumeStop.group(3);
+            return row;
+        }
+
+        if (INCONSISTENT_MBO_PATTERN.matcher(body).matches()) {
+            row.type = "INCONSISTENT MBO DATA";
+        }
+
+        return row;
+    }
+
+    private static boolean fillAlertMatch(CsvLogRow row, Matcher matcher, String type, int sideGroup, int priceGroup,
+            int valueGroup) {
+        if (!matcher.matches()) {
+            return false;
+        }
+
+        row.type = type;
+        row.side = normalizeSide(matcher.group(sideGroup));
+        row.price = matcher.group(priceGroup);
+        row.value = matcher.group(valueGroup);
+        return true;
+    }
+
+    static String csvHeader() {
+        return CSV_HEADER;
+    }
+
+    static String toCsvLine(CsvLogRow row) {
+        return String.join(",",
+                csvEscape(row.timestamp),
+                csvEscape(row.alias),
+                csvEscape(row.type),
+                csvEscape(row.side),
+                csvEscape(row.price),
+                csvEscape(row.value),
+                csvEscape(row.priceMin),
+                csvEscape(row.priceMax),
+                csvEscape(row.bidSize),
+                csvEscape(row.askSize),
+                csvEscape(row.durationSec),
+                csvEscape(row.rawText));
+    }
+
+    static String normalizeSide(String rawSide) {
+        String side = nonNull(rawSide).trim().toUpperCase(Locale.ROOT);
+        switch (side) {
+            case "BID":
+            case "ASK":
+                return side;
+            case "BUY":
+                return "ASK";
+            case "SELL":
+                return "BID";
+            default:
+                return "";
+        }
+    }
+
+    static String normalizeDotSide(int delta) {
+        if (delta > 0) {
+            return "ASK";
+        }
+        if (delta < 0) {
+            return "BID";
+        }
+        return "";
+    }
+
+    static void appendCsvLine(File file, String csvLine) throws IOException {
+        boolean writeHeader = !file.exists() || file.length() == 0;
+        try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(file, true)))) {
+            if (writeHeader) {
+                out.println(csvHeader());
+            }
+            out.println(csvLine);
+        }
+    }
+
+    private static String csvEscape(String value) {
+        String safe = nonNull(value);
+        boolean needsQuotes = safe.contains(",") || safe.contains("\"") || safe.contains("\n") || safe.contains("\r");
+        if (!needsQuotes) {
+            return safe;
+        }
+        return "\"" + safe.replace("\"", "\"\"") + "\"";
+    }
+
+    private static String formatNumber(double value) {
+        if (Math.rint(value) == value) {
+            return String.format(Locale.US, "%.0f", value);
+        }
+        return java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
+    }
+
+    private static String nonNull(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static String buildDotRawText(AggregatedTrade trade, int delta) {
+        String priceStr;
+        if (trade.minPrice == trade.maxPrice) {
+            priceStr = String.format(Locale.US, "%.2f", trade.minPrice);
+        } else {
+            priceStr = String.format(Locale.US, "%.2f-%.2f (Avg: %.2f)", trade.minPrice, trade.maxPrice, trade.getVwap());
+        }
+
+        String direction = delta > 0 ? "BUY" : (delta < 0 ? "SELL" : "NEUTRAL");
+        return String.format(Locale.US, "[DOT] %s | %s | Price: %s | Delta: %+d | (Bid:%d Ask:%d)",
+                trade.alias, direction, priceStr, delta, trade.bidSize, trade.askSize);
+    }
+
+    private static String buildWallRawText(String type, String alias, boolean isBid, int price, int size, int extraValue,
+            long durationSec) {
+        if ("WALL ADDED".equals(type)) {
+            return String.format(Locale.US,
+                    "[WALL ADDED] %s | %s | Price: %d | Size: %d | Net Added: %d | Dur: %ds",
+                    alias, isBid ? "BID" : "ASK", price, size, extraValue, durationSec);
+        }
+        return String.format(Locale.US,
+                "[WALL REMOVED] %s | %s | Price: %d | Current Size: %d | Threshold: %d",
+                alias, isBid ? "BID" : "ASK", price, size, extraValue);
     }
 
     @Override
@@ -285,9 +583,10 @@ public class AlertListener implements
             // Wall Removal Detection: size drops below threshold
             if (size < settings.minWallSizeRemoved) {
                 if (state.isLogged) {
-                    String wallMsg = String.format("[WALL REMOVED] %s | %s | Price: %d | Current Size: %d | Threshold: %d",
-                            alias, isBid ? "BID" : "ASK", price, size, settings.minWallSizeRemoved);
-                    logToUI(alias, wallMsg);
+                    String timestamp = currentTimestamp();
+                    String wallMsg = buildWallRawText("WALL REMOVED", alias, isBid, price, size,
+                            settings.minWallSizeRemoved, 0);
+                    logCsvRow(alias, createWallCsvRow(timestamp, alias, isBid, price, size, 0, "WALL REMOVED", wallMsg));
                     sendWallEvent("removed", alias, isBid, price, size, 0);
                 }
                 wallStates.remove(wallKey);
@@ -323,18 +622,17 @@ public class AlertListener implements
 
     @Override
     public void onTrade(String alias, double price, int size, TradeInfo tradeInfo) {
-        // Bookmap API definition: isBidAggressor actually means the BUYER was the aggressor (Green Bubble).
-        // When tradeInfo.isBidAggressor is true, it represents a BUY order.
-        boolean isBuy = tradeInfo.isBidAggressor;
-        // Aggregation is now per-alias only to calculate Delta
+        // Bookmap API: true means the aggressive trade happened on the bid side.
+        boolean isBidAggressor = tradeInfo.isBidAggressor;
+        // Aggregation is per-alias and keeps bid/ask aggressor volume separately.
         String key = alias;
         long currentMs = getCurrentTimeMs();
 
         tradeBuffer.compute(key, (k, existing) -> {
             if (existing == null) {
-                return new AggregatedTrade(alias, price, isBuy, size, currentMs);
+                return new AggregatedTrade(alias, price, isBidAggressor, size, currentMs);
             } else {
-                existing.add(price, isBuy, size, currentMs);
+                existing.add(price, isBidAggressor, size, currentMs);
                 return existing;
             }
         });
@@ -355,10 +653,12 @@ public class AlertListener implements
                     long elapsedSeconds = (now - state.firstSeenTime) / 1000;
                     if (elapsedSeconds >= settings.minWallDur) {
                         state.isLogged = true;
-                        String wallMsg = String.format(
-                                "[WALL ADDED] %s | %s | Price: %d | Size: %d | Net Added: %d | Dur: %ds",
-                                state.alias, state.isBid ? "BID" : "ASK", state.price, state.currentDomSize, state.accumulatedSize, elapsedSeconds);
-                        logToUI(state.alias, wallMsg);
+                        String timestamp = currentTimestamp();
+                        String wallMsg = buildWallRawText("WALL ADDED", state.alias, state.isBid, state.price,
+                                state.currentDomSize, state.accumulatedSize, elapsedSeconds);
+                        logCsvRow(state.alias,
+                                createWallCsvRow(timestamp, state.alias, state.isBid, state.price, state.currentDomSize,
+                                        elapsedSeconds, "WALL ADDED", wallMsg));
                         sendWallEvent("added", state.alias, state.isBid, state.price, state.currentDomSize, elapsedSeconds);
                     }
                 }
@@ -394,19 +694,8 @@ public class AlertListener implements
     }
 
     private void processFlush(AggregatedTrade trade, int delta) {
-        String priceStr;
-        if (trade.minPrice == trade.maxPrice) {
-            priceStr = String.format("%.2f", trade.minPrice);
-        } else {
-            // It's a sweep! Show the range or average
-            priceStr = String.format("%.2f-%.2f (Avg: %.2f)", trade.minPrice, trade.maxPrice, trade.getVwap());
-        }
-
-        String direction = delta > 0 ? "BUY" : (delta < 0 ? "SELL" : "NEUTRAL");
         boolean isNetBuy = delta > 0;
-        String dotMsg = String.format("[DOT] %s | %s | Price: %s | Delta: %+d | (B:%d S:%d)",
-                trade.alias, direction, priceStr, delta, trade.buySize, trade.sellSize);
-        logToUI(trade.alias, dotMsg);
+        logCsvRow(trade.alias, createDotCsvRow(currentTimestamp(), trade));
         sendDotEvent(trade.alias, isNetBuy, trade.getVwap(), Math.abs(delta));
     }
 
@@ -459,7 +748,7 @@ public class AlertListener implements
 
             if (textLower.contains(aliasLower) || textLower.contains(root)) {
                 // Update UI & Disk for this specific tab
-                String timestampedMsg = logToUI(alias, logEntry);
+                String timestampedMsg = logCsvRow(alias, parseAlertCsvRow(currentTimestamp(), alias, text, alert.showPopup));
                 // Add to memory log for this alias (now with timestamp)
                 java.util.List<String> logs = alertLogsMap.computeIfAbsent(alias, k -> new ArrayList<>());
                 synchronized (logs) {
@@ -670,20 +959,23 @@ public class AlertListener implements
                     currentLogs.clear();
                 }
             }
-            areaForThisTab.setText("");
+            setAreaToHeader(areaForThisTab);
 
             // Clear disk (delete the file)
-            File file = new File(System.getProperty("user.home"),
-                    "AlertListener_history_" + sanitize(indicatorName) + ".log");
-            if (file.exists()) {
-                file.delete();
+            File csvFile = getCsvHistoryFile(indicatorName);
+            if (csvFile.exists()) {
+                csvFile.delete();
+            }
+            File legacyFile = getLegacyHistoryFile(indicatorName);
+            if (legacyFile.exists()) {
+                legacyFile.delete();
             }
         });
 
         JButton exportButton = new JButton("Export Log");
         exportButton.addActionListener(e -> {
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-            String fileName = "AlertListener_Export_" + sanitize(indicatorName) + "_" + timestamp + ".txt";
+            String fileName = "AlertListener_Export_" + sanitize(indicatorName) + "_" + timestamp + ".csv";
             File exportFile = new File(System.getProperty("user.home"), fileName);
             try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(exportFile)))) {
                 out.print(areaForThisTab.getText());
@@ -755,11 +1047,14 @@ public class AlertListener implements
     }
 
     private void loadLogHistory(String alias, JTextArea area) {
-        // 1. Load instrument specific logs ONLY (Internal system logs are managed
-        // separately)
-        File instrumentFile = new File(System.getProperty("user.home"),
-                "AlertListener_history_" + sanitize(alias) + ".log");
-        loadLines(instrumentFile, area);
+        File csvFile = getCsvHistoryFile(alias);
+        if (csvFile.exists()) {
+            loadLines(csvFile, area);
+            return;
+        }
+
+        setAreaToHeader(area);
+        loadLines(getLegacyHistoryFile(alias), area);
     }
 
     private void loadLines(File file, JTextArea area) {
@@ -780,6 +1075,20 @@ public class AlertListener implements
                 System.err.println("Error loading log history from " + file.getName() + ": " + e.getMessage());
             }
         }
+    }
+
+    private File getCsvHistoryFile(String alias) {
+        return new File(System.getProperty("user.home"),
+                "AlertListener_history_" + sanitize(alias) + ".csv");
+    }
+
+    private File getLegacyHistoryFile(String alias) {
+        return new File(System.getProperty("user.home"),
+                "AlertListener_history_" + sanitize(alias) + ".log");
+    }
+
+    private void setAreaToHeader(JTextArea area) {
+        area.setText(csvHeader() + "\n");
     }
 
     @Override

@@ -11,6 +11,10 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
 repositories {
     mavenCentral()
     maven {
@@ -26,6 +30,17 @@ dependencies {
     // Apache Commons
     compileOnly group: 'org.apache.commons', name: 'commons-lang3', version: '3.11'
     compileOnly group: 'com.ibm.icu', name: 'icu4j', version: '71.1'
+
+    testCompileOnly group: 'com.bookmap.api', name: 'api-core', version: '7.6.0.20'
+    testCompileOnly group: 'com.bookmap.api', name: 'api-simplified', version: '7.6.0.20'
+    testCompileOnly group: 'org.apache.commons', name: 'commons-lang3', version: '3.11'
+    testCompileOnly group: 'com.ibm.icu', name: 'icu4j', version: '71.1'
+    testRuntimeOnly group: 'com.bookmap.api', name: 'api-core', version: '7.6.0.20'
+    testRuntimeOnly group: 'com.bookmap.api', name: 'api-simplified', version: '7.6.0.20'
+    testRuntimeOnly group: 'org.apache.commons', name: 'commons-lang3', version: '3.11'
+    testRuntimeOnly group: 'com.ibm.icu', name: 'icu4j', version: '71.1'
+
+    testImplementation group: 'junit', name: 'junit', version: '4.13.2'
 }
 
 jar {
