@@ -14,7 +14,7 @@
  *  velox.api.layer1.messages.indicators.IndicatorLineStyle
  */
 package ttw.tradefinder;
- 
+
 import java.util.function.Consumer;
 import org.apache.commons.lang3.tuple.Pair;
 import ttw.tradefinder.H;
