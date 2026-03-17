@@ -1,0 +1,65 @@
+{
+  "sourcePath": "..\\..\\ctrader-indicators\\Raw Source Code\\Order Flow Aggregated v2.0.cs",
+  "targetDir": ".\\src",
+  "mainOutputFileName": "Order Flow Aggregated v2.0.cs",
+  "sharedHeader": {
+    "startLine": 128,
+    "endLine": 145
+  },
+  "sharedFooter": {
+    "startLine": 11359,
+    "endLine": 11359
+  },
+  "merge": {
+    "trimTrailingPatterns": [
+      "    // Helper types were moved to companion files to keep this indicator source indexable."
+    ]
+  },
+  "sections": [
+    {
+      "name": "ParamsPanel",
+      "outputFileName": "Order Flow Aggregated v2.0.ParamsPanel.cs",
+      "startLine": 7219,
+      "endLine": 10390,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Styles",
+      "outputFileName": "Order Flow Aggregated v2.0.Styles.cs",
+      "startLine": 10393,
+      "endLine": 10503,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    },
+    {
+      "name": "CustomMA",
+      "outputFileName": "Order Flow Aggregated v2.0.CustomMA.cs",
+      "startLine": 10506,
+      "endLine": 10735,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Filters",
+      "outputFileName": "Order Flow Aggregated v2.0.Filters.cs",
+      "startLine": 10737,
+      "endLine": 10882,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    },
+    {
+      "name": "NodesAnalizer",
+      "outputFileName": "Order Flow Aggregated v2.0.NodesAnalizer.cs",
+      "startLine": 10884,
+      "endLine": 11358,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+<Project>
+  <ItemGroup>
+    <PackageVersion Include="cTrader.Automate" Version="1.0.14" />
+  </ItemGroup>
+</Project>

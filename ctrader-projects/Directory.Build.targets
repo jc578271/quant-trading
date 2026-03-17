@@ -1,0 +1,12 @@
+<Project>
+  <Target Name="CopyAlgoToCTraderIndicators"
+          AfterTargets="Build"
+          Condition="Exists('$(TargetDir)$(AssemblyName).algo')">
+    <MakeDir Directories="$(CTraderIndicatorsDir)" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).algo"
+          DestinationFolder="$(CTraderIndicatorsDir)"
+          SkipUnchangedFiles="true" />
+    <Message Importance="High"
+             Text="Copied $(AssemblyName).algo to $(CTraderIndicatorsDir)" />
+  </Target>
+</Project>

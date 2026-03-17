@@ -1,0 +1,51 @@
+{
+  "sourcePath": "..\\..\\ctrader-indicators\\Raw Source Code\\Weis & Wyckoff System v2.0.cs",
+  "targetDir": ".\\src",
+  "mainOutputFileName": "Weis & Wyckoff System v2.0.cs",
+  "sharedHeader": {
+    "startLine": 67,
+    "endLine": 82
+  },
+  "sharedFooter": {
+    "startLine": 5479,
+    "endLine": 5479
+  },
+  "sections": [
+    {
+      "name": "ParamsPanel",
+      "outputFileName": "Weis & Wyckoff System v2.0.ParamsPanel.cs",
+      "startLine": 3021,
+      "endLine": 5098,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Styles",
+      "outputFileName": "Weis & Wyckoff System v2.0.Styles.cs",
+      "startLine": 5099,
+      "endLine": 5209,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Filters",
+      "outputFileName": "Weis & Wyckoff System v2.0.Filters.cs",
+      "startLine": 5211,
+      "endLine": 5246,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    },
+    {
+      "name": "CustomMA",
+      "outputFileName": "Weis & Wyckoff System v2.0.CustomMA.cs",
+      "startLine": 5248,
+      "endLine": 5477,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    }
+  ]
+}
