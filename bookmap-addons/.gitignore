@@ -59,8 +59,3 @@ coverage/
 # Temporary folders
 tmp/
 temp/ 
-
-# Tradefinder
-tradefinder-src-ttw/
-tradefinder-src/
-tradefinder-extract/
