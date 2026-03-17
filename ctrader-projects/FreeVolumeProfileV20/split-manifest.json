@@ -1,0 +1,42 @@
+{
+  "sourcePath": "..\\..\\ctrader-indicators\\Raw Source Code\\Free Volume Profile v2.0.cs",
+  "targetDir": ".\\src",
+  "mainOutputFileName": "Free Volume Profile v2.0.cs",
+  "sharedHeader": {
+    "startLine": 62,
+    "endLine": 77
+  },
+  "sharedFooter": {
+    "startLine": 6428,
+    "endLine": 6428
+  },
+  "sections": [
+    {
+      "name": "ParamsPanel",
+      "outputFileName": "Free Volume Profile v2.0.ParamsPanel.cs",
+      "startLine": 4287,
+      "endLine": 5939,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Styles",
+      "outputFileName": "Free Volume Profile v2.0.Styles.cs",
+      "startLine": 5940,
+      "endLine": 6050,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    },
+    {
+      "name": "NodesAnalizer",
+      "outputFileName": "Free Volume Profile v2.0.NodesAnalizer.cs",
+      "startLine": 6053,
+      "endLine": 6427,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "appendSharedFooter": true
+    }
+  ]
+}

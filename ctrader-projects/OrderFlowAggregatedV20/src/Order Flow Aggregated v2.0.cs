@@ -1781,6 +1781,19 @@ namespace cAlgo
             return "\"" + value.Replace("\"", "\"\"") + "\"";
         }
 
+        private void ExportCsvData(int iStart)
+        {
+            try
+            {
+                Dictionary<string, object> exportData = BuildExportPayload(iStart);
+                AppendDirectCsv(exportData);
+            }
+            catch (Exception ex)
+            {
+                Print("CSV Export Error: " + ex.Message);
+            }
+        }
+
         public void SendSocketData(int iStart)
         {
             // Filter out empty bars: only send if volume profile data exists
@@ -1789,15 +1802,6 @@ namespace cAlgo
             try
             {
                 Dictionary<string, object> exportData = BuildExportPayload(iStart);
-
-                try
-                {
-                    AppendDirectCsv(exportData);
-                }
-                catch (Exception ex)
-                {
-                    Print("CSV Export Error: " + ex.Message);
-                }
 
                 string jsonString = JsonSerializer.Serialize(exportData) + "\n";
                 byte[] dataBytes = Encoding.UTF8.GetBytes(jsonString);
@@ -3618,7 +3622,11 @@ namespace cAlgo
             }
 
             // TCP SOCKET EXPORT LOGIC 
-            if (ExportHistory || IsLastBar)
+            if (ExportHistory)
+            {
+                ExportCsvData(iStart);
+            }
+            else if (IsLastBar)
             {
                 SendSocketData(iStart);
             }

@@ -229,7 +229,7 @@ else {
 }
 
 $trimPatterns = @()
-if ($manifest.merge -and $manifest.merge.trimTrailingPatterns) {
+if ($manifest.PSObject.Properties.Name -contains "merge" -and $manifest.merge -and $manifest.merge.trimTrailingPatterns) {
     $trimPatterns = @($manifest.merge.trimTrailingPatterns)
 }
 
