@@ -6,3 +6,7 @@ __pycache__
 .dotnet-cli/
 .nuget/
 .idea/
+.npm-cache/
+.dotnet-home/
+.ctrader-indicators-test/
+.tmp/
