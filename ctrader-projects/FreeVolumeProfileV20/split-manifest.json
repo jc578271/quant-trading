@@ -4,18 +4,162 @@
   "mainOutputFileName": "Free Volume Profile v2.0.cs",
   "sharedHeader": {
     "startLine": 62,
-    "endLine": 77
+    "endLine": 78
   },
   "sharedFooter": {
-    "startLine": 6428,
-    "endLine": 6428
+    "startLine": 6545,
+    "endLine": 6545
+  },
+  "mainOutputReplacements": [
+    {
+      "oldText": "    public class FreeVolumeProfileV20 : Indicator",
+      "newText": "    public partial class FreeVolumeProfileV20 : Indicator"
+    }
+  ],
+  "merge": {
+    "mainInputReplacements": [
+      {
+        "oldText": "    public partial class FreeVolumeProfileV20 : Indicator",
+        "newText": "    public class FreeVolumeProfileV20 : Indicator"
+      }
+    ],
+    "mainTrailingLinesCount": 1,
+    "insertMainTrailingLinesBeforeSection": "ParamsPanel"
   },
   "sections": [
     {
+      "name": "Lifecycle",
+      "outputFileName": "Free Volume Profile v2.0.Lifecycle.cs",
+      "startLine": 689,
+      "endLine": 1171,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class FreeVolumeProfileV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Segments",
+      "outputFileName": "Free Volume Profile v2.0.Segments.cs",
+      "startLine": 1172,
+      "endLine": 1292,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class FreeVolumeProfileV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "VolumeProfile",
+      "outputFileName": "Free Volume Profile v2.0.VolumeProfile.cs",
+      "startLine": 1293,
+      "endLine": 2410,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class FreeVolumeProfileV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "MiniProfiles",
+      "outputFileName": "Free Volume Profile v2.0.MiniProfiles.cs",
+      "startLine": 2411,
+      "endLine": 3052,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class FreeVolumeProfileV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "FixedRange",
+      "outputFileName": "Free Volume Profile v2.0.FixedRange.cs",
+      "startLine": 3053,
+      "endLine": 3528,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class FreeVolumeProfileV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "ValueArea",
+      "outputFileName": "Free Volume Profile v2.0.ValueArea.cs",
+      "startLine": 3529,
+      "endLine": 3802,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class FreeVolumeProfileV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Nodes",
+      "outputFileName": "Free Volume Profile v2.0.Nodes.cs",
+      "startLine": 3803,
+      "endLine": 4109,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class FreeVolumeProfileV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Recalculation",
+      "outputFileName": "Free Volume Profile v2.0.Recalculation.cs",
+      "startLine": 4110,
+      "endLine": 4401,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class FreeVolumeProfileV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
       "name": "ParamsPanel",
       "outputFileName": "Free Volume Profile v2.0.ParamsPanel.cs",
-      "startLine": 4287,
-      "endLine": 5939,
+      "startLine": 4404,
+      "endLine": 6056,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true
@@ -23,8 +167,8 @@
     {
       "name": "Styles",
       "outputFileName": "Free Volume Profile v2.0.Styles.cs",
-      "startLine": 5940,
-      "endLine": 6050,
+      "startLine": 6057,
+      "endLine": 6169,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true
@@ -32,8 +176,8 @@
     {
       "name": "NodesAnalizer",
       "outputFileName": "Free Volume Profile v2.0.NodesAnalizer.cs",
-      "startLine": 6053,
-      "endLine": 6427,
+      "startLine": 6170,
+      "endLine": 6544,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true

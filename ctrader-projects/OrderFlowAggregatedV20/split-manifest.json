@@ -7,20 +7,178 @@
     "endLine": 145
   },
   "sharedFooter": {
-    "startLine": 11359,
-    "endLine": 11359
+    "startLine": 11367,
+    "endLine": 11367
   },
+  "mainOutputReplacements": [
+    {
+      "oldText": "    public class OrderFlowTicksV20 : Indicator",
+      "newText": "    public partial class OrderFlowTicksV20 : Indicator"
+    }
+  ],
   "merge": {
+    "mainInputReplacements": [
+      {
+        "oldText": "    public partial class OrderFlowTicksV20 : Indicator",
+        "newText": "    public class OrderFlowTicksV20 : Indicator"
+      }
+    ],
+    "mainTrailingLinesCount": 1,
+    "insertMainTrailingLinesBeforeSection": "ParamsPanel",
     "trimTrailingPatterns": [
       "    // Helper types were moved to companion files to keep this indicator source indexable."
     ]
   },
   "sections": [
     {
+      "name": "Lifecycle",
+      "outputFileName": "Order Flow Aggregated v2.0.Lifecycle.cs",
+      "startLine": 1309,
+      "endLine": 1959,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class OrderFlowTicksV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "OrderFlow",
+      "outputFileName": "Order Flow Aggregated v2.0.OrderFlow.cs",
+      "startLine": 1960,
+      "endLine": 3753,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class OrderFlowTicksV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "OrderFlowVisuals",
+      "outputFileName": "Order Flow Aggregated v2.0.OrderFlowVisuals.cs",
+      "startLine": 3754,
+      "endLine": 4106,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class OrderFlowTicksV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Segments",
+      "outputFileName": "Order Flow Aggregated v2.0.Segments.cs",
+      "startLine": 4107,
+      "endLine": 4195,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class OrderFlowTicksV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "VolumeProfile",
+      "outputFileName": "Order Flow Aggregated v2.0.VolumeProfile.cs",
+      "startLine": 4196,
+      "endLine": 5004,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class OrderFlowTicksV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "LiveProfiles",
+      "outputFileName": "Order Flow Aggregated v2.0.LiveProfiles.cs",
+      "startLine": 5005,
+      "endLine": 5564,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class OrderFlowTicksV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "FixedRange",
+      "outputFileName": "Order Flow Aggregated v2.0.FixedRange.cs",
+      "startLine": 5565,
+      "endLine": 5924,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class OrderFlowTicksV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Rendering",
+      "outputFileName": "Order Flow Aggregated v2.0.Rendering.cs",
+      "startLine": 5925,
+      "endLine": 6845,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class OrderFlowTicksV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Nodes",
+      "outputFileName": "Order Flow Aggregated v2.0.Nodes.cs",
+      "startLine": 6846,
+      "endLine": 7224,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class OrderFlowTicksV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
       "name": "ParamsPanel",
       "outputFileName": "Order Flow Aggregated v2.0.ParamsPanel.cs",
-      "startLine": 7219,
-      "endLine": 10390,
+      "startLine": 7227,
+      "endLine": 10401,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true
@@ -28,8 +186,8 @@
     {
       "name": "Styles",
       "outputFileName": "Order Flow Aggregated v2.0.Styles.cs",
-      "startLine": 10393,
-      "endLine": 10503,
+      "startLine": 10402,
+      "endLine": 10513,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true
@@ -37,8 +195,8 @@
     {
       "name": "CustomMA",
       "outputFileName": "Order Flow Aggregated v2.0.CustomMA.cs",
-      "startLine": 10506,
-      "endLine": 10735,
+      "startLine": 10514,
+      "endLine": 10744,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true
@@ -46,8 +204,8 @@
     {
       "name": "Filters",
       "outputFileName": "Order Flow Aggregated v2.0.Filters.cs",
-      "startLine": 10737,
-      "endLine": 10882,
+      "startLine": 10745,
+      "endLine": 10891,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true
@@ -55,8 +213,8 @@
     {
       "name": "NodesAnalizer",
       "outputFileName": "Order Flow Aggregated v2.0.NodesAnalizer.cs",
-      "startLine": 10884,
-      "endLine": 11358,
+      "startLine": 10892,
+      "endLine": 11366,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true

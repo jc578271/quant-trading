@@ -4,18 +4,130 @@
   "mainOutputFileName": "Weis & Wyckoff System v2.0.cs",
   "sharedHeader": {
     "startLine": 67,
-    "endLine": 82
+    "endLine": 83
   },
   "sharedFooter": {
-    "startLine": 5479,
-    "endLine": 5479
+    "startLine": 5591,
+    "endLine": 5591
+  },
+  "mainOutputReplacements": [
+    {
+      "oldText": "    public class WeisWyckoffSystemV20 : Indicator",
+      "newText": "    public partial class WeisWyckoffSystemV20 : Indicator"
+    }
+  ],
+  "merge": {
+    "mainInputReplacements": [
+      {
+        "oldText": "    public partial class WeisWyckoffSystemV20 : Indicator",
+        "newText": "    public class WeisWyckoffSystemV20 : Indicator"
+      }
+    ],
+    "mainTrailingLinesCount": 2,
+    "insertMainTrailingLinesBeforeSection": "ParamsPanel"
   },
   "sections": [
     {
+      "name": "Lifecycle",
+      "outputFileName": "Weis & Wyckoff System v2.0.Lifecycle.cs",
+      "startLine": 698,
+      "endLine": 1212,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class WeisWyckoffSystemV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Wyckoff",
+      "outputFileName": "Weis & Wyckoff System v2.0.Wyckoff.cs",
+      "startLine": 1213,
+      "endLine": 1640,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class WeisWyckoffSystemV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "VolumeSources",
+      "outputFileName": "Weis & Wyckoff System v2.0.VolumeSources.cs",
+      "startLine": 1641,
+      "endLine": 1969,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class WeisWyckoffSystemV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "PerformanceDrawing",
+      "outputFileName": "Weis & Wyckoff System v2.0.PerformanceDrawing.cs",
+      "startLine": 1970,
+      "endLine": 2242,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class WeisWyckoffSystemV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "WeisWave",
+      "outputFileName": "Weis & Wyckoff System v2.0.WeisWave.cs",
+      "startLine": 2243,
+      "endLine": 3020,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class WeisWyckoffSystemV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
+      "name": "Recalculation",
+      "outputFileName": "Weis & Wyckoff System v2.0.Recalculation.cs",
+      "startLine": 3021,
+      "endLine": 3091,
+      "removeFromMain": true,
+      "prependSharedHeader": true,
+      "prependLiteralLines": [
+        "    public partial class WeisWyckoffSystemV20 : Indicator",
+        "    {"
+      ],
+      "appendLiteralLines": [
+        "    }"
+      ],
+      "appendSharedFooter": true
+    },
+    {
       "name": "ParamsPanel",
       "outputFileName": "Weis & Wyckoff System v2.0.ParamsPanel.cs",
-      "startLine": 3021,
-      "endLine": 5098,
+      "startLine": 3095,
+      "endLine": 5211,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true
@@ -23,8 +135,8 @@
     {
       "name": "Styles",
       "outputFileName": "Weis & Wyckoff System v2.0.Styles.cs",
-      "startLine": 5099,
-      "endLine": 5209,
+      "startLine": 5212,
+      "endLine": 5323,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true
@@ -32,8 +144,8 @@
     {
       "name": "Filters",
       "outputFileName": "Weis & Wyckoff System v2.0.Filters.cs",
-      "startLine": 5211,
-      "endLine": 5246,
+      "startLine": 5324,
+      "endLine": 5360,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true
@@ -41,8 +153,8 @@
     {
       "name": "CustomMA",
       "outputFileName": "Weis & Wyckoff System v2.0.CustomMA.cs",
-      "startLine": 5248,
-      "endLine": 5477,
+      "startLine": 5361,
+      "endLine": 5590,
       "removeFromMain": true,
       "prependSharedHeader": true,
       "appendSharedFooter": true

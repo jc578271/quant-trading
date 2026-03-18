@@ -72,6 +72,170 @@ function Get-LineSlice {
     return $result.ToArray()
 }
 
+function Get-NormalizedList {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return @()
+    }
+
+    if ($Value -is [System.Array]) {
+        return @($Value)
+    }
+
+    return @($Value)
+}
+
+function Get-LineRangesContent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string[]]$Lines,
+
+        [AllowNull()]
+        [object]$Ranges
+    )
+
+    $result = New-Object System.Collections.Generic.List[string]
+
+    foreach ($range in (Get-NormalizedList -Value $Ranges)) {
+        if ($null -eq $range) {
+            continue
+        }
+
+        if ($null -eq $range.startLine -or $null -eq $range.endLine) {
+            throw "Each line range must define 'startLine' and 'endLine'."
+        }
+
+        $slice = Get-LineSlice -Lines $Lines -StartLine ([int]$range.startLine) -EndLine ([int]$range.endLine)
+        $result.AddRange([string[]]$slice)
+    }
+
+    return $result.ToArray()
+}
+
+function Get-LiteralLines {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    $result = New-Object System.Collections.Generic.List[string]
+    foreach ($item in (Get-NormalizedList -Value $Value)) {
+        $result.Add([string]$item)
+    }
+
+    return $result.ToArray()
+}
+
+function Get-SectionPrefixLines {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string[]]$SourceLines,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Section,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string[]]$SharedHeader
+    )
+
+    $result = New-Object System.Collections.Generic.List[string]
+
+    if ($Section.prependSharedHeader -and $SharedHeader -and $SharedHeader.Count -gt 0) {
+        $result.AddRange([string[]]$SharedHeader)
+    }
+
+    $prependLineRanges = if ($Section.PSObject.Properties.Name -contains "prependLineRanges") { $Section.prependLineRanges } else { $null }
+    $prependLiteralLines = if ($Section.PSObject.Properties.Name -contains "prependLiteralLines") { $Section.prependLiteralLines } else { $null }
+    $rangeLines = @(Get-LineRangesContent -Lines $SourceLines -Ranges $prependLineRanges)
+    $literalLines = @(Get-LiteralLines -Value $prependLiteralLines)
+
+    if ($rangeLines.Count -gt 0) {
+        $result.AddRange([string[]]$rangeLines)
+    }
+    if ($literalLines.Count -gt 0) {
+        $result.AddRange([string[]]$literalLines)
+    }
+
+    return $result.ToArray()
+}
+
+function Get-SectionSuffixLines {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string[]]$SourceLines,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Section,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+    [string[]]$SharedFooter
+    )
+
+    $appendLiteralLines = if ($Section.PSObject.Properties.Name -contains "appendLiteralLines") { $Section.appendLiteralLines } else { $null }
+    $appendLineRanges = if ($Section.PSObject.Properties.Name -contains "appendLineRanges") { $Section.appendLineRanges } else { $null }
+    $literalLines = @(Get-LiteralLines -Value $appendLiteralLines)
+    $rangeLines = @(Get-LineRangesContent -Lines $SourceLines -Ranges $appendLineRanges)
+    $result = New-Object System.Collections.Generic.List[string]
+
+    if ($literalLines.Count -gt 0) {
+        $result.AddRange([string[]]$literalLines)
+    }
+    if ($rangeLines.Count -gt 0) {
+        $result.AddRange([string[]]$rangeLines)
+    }
+
+    if ($Section.appendSharedFooter -and $SharedFooter -and $SharedFooter.Count -gt 0) {
+        $result.AddRange([string[]]$SharedFooter)
+    }
+
+    return $result.ToArray()
+}
+
+function Apply-LineReplacements {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string[]]$Lines,
+
+        [AllowNull()]
+        [object]$Replacements
+    )
+
+    $replacementList = @(Get-NormalizedList -Value $Replacements)
+    if ($replacementList.Count -eq 0) {
+        return $Lines
+    }
+
+    $result = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $Lines) {
+        $newLine = $line
+        foreach ($replacement in $replacementList) {
+            if ($null -eq $replacement) {
+                continue
+            }
+
+            $oldText = [string]$replacement.oldText
+            $newText = [string]$replacement.newText
+
+            if ($newLine -eq $oldText) {
+                $newLine = $newText
+            }
+        }
+        $result.Add($newLine)
+    }
+
+    return $result.ToArray()
+}
+
 function Write-Utf8File {
     param(
         [Parameter(Mandatory = $true)]
@@ -208,18 +372,26 @@ foreach ($section in $sections) {
     $outputPath = Join-Path $resolvedTargetDir $section.outputFileName
     $sectionLines = New-Object System.Collections.Generic.List[string]
 
-    if ($section.prependSharedHeader -and $sharedHeader.Count -gt 0) {
-        $sectionLines.AddRange([string[]]$sharedHeader)
+    $prefixLines = @(Get-SectionPrefixLines -SourceLines $sourceLines -Section $section -SharedHeader $sharedHeader)
+    if ($prefixLines.Count -gt 0) {
+        $sectionLines.AddRange([string[]]$prefixLines)
     }
 
-    $sectionLines.AddRange([string[]](Get-LineSlice -Lines $sourceLines -StartLine ([int]$section.startLine) -EndLine ([int]$section.endLine)))
-
-    if ($section.appendSharedFooter -and $sharedFooter.Count -gt 0) {
-        $sectionLines.AddRange([string[]]$sharedFooter)
+    $bodyLines = @(Get-LineSlice -Lines $sourceLines -StartLine ([int]$section.startLine) -EndLine ([int]$section.endLine))
+    if ($bodyLines.Count -gt 0) {
+        $sectionLines.AddRange([string[]]$bodyLines)
     }
+
+    $suffixLines = @(Get-SectionSuffixLines -SourceLines $sourceLines -Section $section -SharedFooter $sharedFooter)
+    if ($suffixLines.Count -gt 0) {
+        $sectionLines.AddRange([string[]]$suffixLines)
+    }
+
+    $sectionOutputReplacements = if ($section.PSObject.Properties.Name -contains "outputReplacements") { $section.outputReplacements } else { $null }
+    $sectionOutputLines = Apply-LineReplacements -Lines $sectionLines.ToArray() -Replacements $sectionOutputReplacements
 
     if ($PSCmdlet.ShouldProcess($outputPath, "Write split section '$($section.name)'")) {
-        Write-Utf8File -Path $outputPath -Lines $sectionLines.ToArray()
+        Write-Utf8File -Path $outputPath -Lines $sectionOutputLines
     }
 
     $writeResults.Add([pscustomobject]@{
@@ -249,8 +421,11 @@ if (-not $SkipMainFile) {
         }
     }
 
+    $mainOutputReplacements = if ($manifest.PSObject.Properties.Name -contains "mainOutputReplacements") { $manifest.mainOutputReplacements } else { $null }
+    $mainOutputLines = Apply-LineReplacements -Lines $mainLines.ToArray() -Replacements $mainOutputReplacements
+
     if ($PSCmdlet.ShouldProcess($mainOutputPath, "Write main split file")) {
-        Write-Utf8File -Path $mainOutputPath -Lines $mainLines.ToArray()
+        Write-Utf8File -Path $mainOutputPath -Lines $mainOutputLines
     }
 
     $writeResults.Add([pscustomobject]@{

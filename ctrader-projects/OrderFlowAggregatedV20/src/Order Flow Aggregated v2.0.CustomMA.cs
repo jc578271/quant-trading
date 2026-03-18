@@ -246,4 +246,5 @@ namespace cAlgo
             return denom == 0 ? 0.0 : 100.0 * (up - down) / denom;
         }
     }
+
 }

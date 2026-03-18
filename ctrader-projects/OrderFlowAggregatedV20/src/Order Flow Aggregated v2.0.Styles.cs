@@ -16,7 +16,6 @@ using System.Text;
 
 namespace cAlgo
 {
-    // ========= THEME =========
     public static class Styles
     {
         public static readonly Color ColorDarkTheme_Panel = GetColorWithOpacity(Color.FromHex("#292929"), 0.85);
@@ -127,4 +126,6 @@ namespace cAlgo
             return Color.FromArgb(alpha, baseColor);
         }
     }
+
+
 }

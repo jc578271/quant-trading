@@ -55,6 +55,90 @@ function Write-Utf8File {
     [System.IO.File]::WriteAllLines($Path, $Lines, $Utf8NoBom)
 }
 
+function Get-NormalizedList {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return @()
+    }
+
+    if ($Value -is [System.Array]) {
+        return @($Value)
+    }
+
+    return @($Value)
+}
+
+function Get-LineRangeCount {
+    param(
+        [AllowNull()]
+        [object]$Ranges
+    )
+
+    $count = 0
+    foreach ($range in (Get-NormalizedList -Value $Ranges)) {
+        if ($null -eq $range) {
+            continue
+        }
+
+        if ($null -eq $range.startLine -or $null -eq $range.endLine) {
+            throw "Each line range must define 'startLine' and 'endLine'."
+        }
+
+        $count += ([int]$range.endLine - [int]$range.startLine + 1)
+    }
+
+    return $count
+}
+
+function Get-LiteralLineCount {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    return @(Get-NormalizedList -Value $Value).Count
+}
+
+function Apply-LineReplacements {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string[]]$Lines,
+
+        [AllowNull()]
+        [object]$Replacements
+    )
+
+    $replacementList = @(Get-NormalizedList -Value $Replacements)
+    if ($replacementList.Count -eq 0) {
+        return $Lines
+    }
+
+    $result = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $Lines) {
+        $newLine = $line
+        foreach ($replacement in $replacementList) {
+            if ($null -eq $replacement) {
+                continue
+            }
+
+            $oldText = [string]$replacement.oldText
+            $newText = [string]$replacement.newText
+
+            if ($newLine -eq $oldText) {
+                $newLine = $newText
+            }
+        }
+        $result.Add($newLine)
+    }
+
+    return $result.ToArray()
+}
+
 function Get-TrimmedSectionLines {
     param(
         [Parameter(Mandatory = $true)]
@@ -91,12 +175,14 @@ function Get-LastIndexNotMatchingPattern {
         [string[]]$Patterns
     )
 
-    if (-not $Patterns -or $Patterns.Count -eq 0) {
+    $patternList = @(Get-NormalizedList -Value $Patterns)
+
+    if ($patternList.Count -eq 0) {
         return $Lines.Count - 1
     }
 
     $set = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
-    foreach ($pattern in $Patterns) {
+    foreach ($pattern in $patternList) {
         [void]$set.Add($pattern)
     }
 
@@ -210,18 +296,18 @@ if ($manifest.sharedFooter) {
     $footerLineCount = [int]$manifest.sharedFooter.endLine - [int]$manifest.sharedFooter.startLine + 1
 }
 
-$mainLines = [System.IO.File]::ReadAllLines($mainInputPath, $Utf8)
+$mainLines = @([System.IO.File]::ReadAllLines($mainInputPath, $Utf8))
 if ($footerLineCount -gt 0) {
     if ($mainLines.Count -lt $footerLineCount) {
         throw "Main split file is shorter than sharedFooter length."
     }
 
-    $footerLines = $mainLines[($mainLines.Count - $footerLineCount)..($mainLines.Count - 1)]
+    $footerLines = @($mainLines[($mainLines.Count - $footerLineCount)..($mainLines.Count - 1)])
     $mainLines = if ($mainLines.Count -eq $footerLineCount) {
         [string[]]@()
     }
     else {
-        $mainLines[0..($mainLines.Count - $footerLineCount - 1)]
+        @($mainLines[0..($mainLines.Count - $footerLineCount - 1)])
     }
 }
 else {
@@ -229,8 +315,10 @@ else {
 }
 
 $trimPatterns = @()
-if ($manifest.PSObject.Properties.Name -contains "merge" -and $manifest.merge -and $manifest.merge.trimTrailingPatterns) {
-    $trimPatterns = @($manifest.merge.trimTrailingPatterns)
+if ($manifest.PSObject.Properties.Name -contains "merge" -and $manifest.merge) {
+    if ($manifest.merge.PSObject.Properties.Name -contains "trimTrailingPatterns") {
+        $trimPatterns = @($manifest.merge.trimTrailingPatterns)
+    }
 }
 
 $lastMainIndex = Get-LastIndexNotMatchingPattern -Lines $mainLines -Patterns $trimPatterns
@@ -250,6 +338,44 @@ else {
     [string[]]@()
 }
 
+$mainMergeReplacements = @()
+if ($manifest.PSObject.Properties.Name -contains "merge" -and $manifest.merge) {
+    if ($manifest.merge.PSObject.Properties.Name -contains "mainInputReplacements") {
+        $mainMergeReplacements = @($manifest.merge.mainInputReplacements)
+    }
+}
+$mainLines = Apply-LineReplacements -Lines $mainLines -Replacements $mainMergeReplacements
+
+$mainTrailingLinesCount = 0
+$insertMainTrailingLinesBeforeSection = $null
+if ($manifest.PSObject.Properties.Name -contains "merge" -and $manifest.merge) {
+    if ($manifest.merge.PSObject.Properties.Name -contains "mainTrailingLinesCount") {
+        $mainTrailingLinesCount = [int]$manifest.merge.mainTrailingLinesCount
+    }
+    if ($manifest.merge.PSObject.Properties.Name -contains "insertMainTrailingLinesBeforeSection") {
+        $insertMainTrailingLinesBeforeSection = [string]$manifest.merge.insertMainTrailingLinesBeforeSection
+    }
+}
+
+$mainTrailingLines = [string[]]@()
+if ($mainTrailingLinesCount -gt 0) {
+    if ($mainLines.Count -lt $mainTrailingLinesCount) {
+        throw "Main split file is shorter than mainTrailingLinesCount."
+    }
+
+    $mainTrailingLines = @($mainLines[($mainLines.Count - $mainTrailingLinesCount)..($mainLines.Count - 1)])
+    $mainLines = if ($mainLines.Count -eq $mainTrailingLinesCount) {
+        [string[]]@()
+    }
+    else {
+        @($mainLines[0..($mainLines.Count - $mainTrailingLinesCount - 1)])
+    }
+}
+
+if ($mainTrailingLines.Count -gt 0) {
+    $mainTrailingBlankCount = 0
+}
+
 $mergedLines = New-Object System.Collections.Generic.List[string]
 $mergedLines.AddRange([string[]]$mainLines)
 
@@ -260,9 +386,32 @@ for ($sectionIndex = 0; $sectionIndex -lt $sections.Count; $sectionIndex++) {
         throw "Section file not found: $sectionPath"
     }
 
-    $sectionHeaderCount = if ($section.prependSharedHeader) { $headerLineCount } else { 0 }
-    $sectionFooterCount = if ($section.appendSharedFooter) { $footerLineCount } else { 0 }
+    $sectionHeaderCount = 0
+    if ($section.prependSharedHeader) {
+        $sectionHeaderCount += $headerLineCount
+    }
+    $prependLineRanges = if ($section.PSObject.Properties.Name -contains "prependLineRanges") { $section.prependLineRanges } else { $null }
+    $prependLiteralLines = if ($section.PSObject.Properties.Name -contains "prependLiteralLines") { $section.prependLiteralLines } else { $null }
+    $appendLiteralLines = if ($section.PSObject.Properties.Name -contains "appendLiteralLines") { $section.appendLiteralLines } else { $null }
+    $appendLineRanges = if ($section.PSObject.Properties.Name -contains "appendLineRanges") { $section.appendLineRanges } else { $null }
+
+    $sectionHeaderCount += Get-LineRangeCount -Ranges $prependLineRanges
+    $sectionHeaderCount += Get-LiteralLineCount -Value $prependLiteralLines
+
+    $sectionFooterCount = 0
+    $sectionFooterCount += Get-LiteralLineCount -Value $appendLiteralLines
+    $sectionFooterCount += Get-LineRangeCount -Ranges $appendLineRanges
+    if ($section.appendSharedFooter) {
+        $sectionFooterCount += $footerLineCount
+    }
+
     $sectionLines = Get-TrimmedSectionLines -Path $sectionPath -HeaderLineCount $sectionHeaderCount -FooterLineCount $sectionFooterCount
+
+    $insertTrailingHere = $mainTrailingLines.Count -gt 0 -and $insertMainTrailingLinesBeforeSection -and $section.name -eq $insertMainTrailingLinesBeforeSection
+
+    if ($insertTrailingHere) {
+        $mergedLines.AddRange([string[]]$mainTrailingLines)
+    }
 
     if ($sectionIndex -eq 0 -and $mainTrailingBlankCount -gt 0) {
         $mergedLines.Add("")
@@ -270,6 +419,12 @@ for ($sectionIndex = 0; $sectionIndex -lt $sections.Count; $sectionIndex++) {
     elseif ($sectionIndex -gt 0) {
         $previousSection = $sections[$sectionIndex - 1]
         $gapLineCount = [int]$section.startLine - [int]$previousSection.endLine - 1
+        if ($insertTrailingHere) {
+            $gapLineCount -= $mainTrailingLines.Count
+        }
+        if ($gapLineCount -lt 0) {
+            $gapLineCount = 0
+        }
         for ($gapIndex = 0; $gapIndex -lt $gapLineCount; $gapIndex++) {
             $mergedLines.Add("")
         }
