@@ -91,6 +91,9 @@ public class AlertListener implements
     private static final String HOST = "127.0.0.1";
     private static final int PORT = 5555;
     private final Object socketLock = new Object();
+    private static final String EVENT_CONTRACT_SCHEMA = "event-contract/v1";
+    private static final String EVENT_SOURCE = "bookmap";
+    private static final String EVENT_SOURCE_INSTANCE = "AlertListener";
 
     // DOM State Tracking: alias -> OrderBook
     // Note: Bookmap automatically backfills historical data from the chart into
@@ -301,6 +304,123 @@ public class AlertListener implements
     private String currentTimestamp() {
         long currentMs = getCurrentTimeMs();
         return Instant.ofEpochMilli(currentMs).atZone(ZoneOffset.UTC).format(TIME_FMT);
+    }
+
+    private void sendContractEvent(String event, String instrument, String timestamp, Map<String, Object> payload,
+            Map<String, Object> sourceMeta) {
+        synchronized (socketLock) {
+            if (socketWriter == null) {
+                return;
+            }
+
+            Map<String, Object> envelope = new LinkedHashMap<>();
+            envelope.put("schema", EVENT_CONTRACT_SCHEMA);
+            envelope.put("source", EVENT_SOURCE);
+            envelope.put("source_instance", EVENT_SOURCE_INSTANCE);
+            envelope.put("event", event);
+            envelope.put("event_id", buildEventId(event, instrument, timestamp));
+            envelope.put("instrument", instrument);
+            envelope.put("timestamp", timestamp);
+            envelope.put("payload", payload);
+            envelope.put("source_meta", sourceMeta);
+
+            socketWriter.println(toJson(envelope));
+            if (socketWriter.checkError()) {
+                System.err.println("Socket write error detected.");
+                logToUI(null, "ERROR: Socket write failed. Please click Reconnect.");
+            }
+        }
+    }
+
+    private String buildEventId(String event, String instrument, String timestamp) {
+        return String.format("%s-%s-%s-%s",
+                EVENT_SOURCE,
+                sanitizeEventIdPart(event),
+                sanitizeEventIdPart(instrument),
+                sanitizeEventIdPart(timestamp));
+    }
+
+    private String sanitizeEventIdPart(String value) {
+        return nonNull(value).replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String toJson(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof String) {
+            return "\"" + escapeJson((String) value) + "\"";
+        }
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+        if (value instanceof Map<?, ?>) {
+            StringBuilder builder = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<String, Object> entry : ((Map<String, Object>) value).entrySet()) {
+                if (!first) {
+                    builder.append(", ");
+                }
+                builder.append(toJson(entry.getKey()));
+                builder.append(":");
+                builder.append(toJson(entry.getValue()));
+                first = false;
+            }
+            builder.append("}");
+            return builder.toString();
+        }
+        if (value instanceof Collection<?>) {
+            StringBuilder builder = new StringBuilder("[");
+            boolean first = true;
+            for (Object item : (Collection<?>) value) {
+                if (!first) {
+                    builder.append(", ");
+                }
+                builder.append(toJson(item));
+                first = false;
+            }
+            builder.append("]");
+            return builder.toString();
+        }
+        return toJson(String.valueOf(value));
+    }
+
+    private String escapeJson(String value) {
+        StringBuilder builder = new StringBuilder();
+        for (char c : value.toCharArray()) {
+            switch (c) {
+                case '\\':
+                    builder.append("\\\\");
+                    break;
+                case '"':
+                    builder.append("\\\"");
+                    break;
+                case '\b':
+                    builder.append("\\b");
+                    break;
+                case '\f':
+                    builder.append("\\f");
+                    break;
+                case '\n':
+                    builder.append("\\n");
+                    break;
+                case '\r':
+                    builder.append("\\r");
+                    break;
+                case '\t':
+                    builder.append("\\t");
+                    break;
+                default:
+                    if (c < 0x20) {
+                        builder.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        builder.append(c);
+                    }
+                    break;
+            }
+        }
+        return builder.toString();
     }
 
     static CsvLogRow createSystemCsvRow(String timestamp, String alias, String message) {
@@ -595,25 +715,30 @@ public class AlertListener implements
     }
 
     private void sendDomEvent(String action, String alias, boolean isBid, int price, int size) {
-        synchronized (socketLock) {
-            if (socketWriter != null) {
-                String json = String.format(
-                        "{\"type\":\"dom\", \"action\":\"%s\", \"alias\":\"%s\", \"isBid\":%b, \"price\":%d, \"size\":%d}",
-                        action, alias, isBid, price, size);
-                socketWriter.println(json);
-            }
-        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("action", action);
+        payload.put("isBid", isBid);
+        payload.put("price", price);
+        payload.put("size", size);
+
+        Map<String, Object> sourceMeta = new LinkedHashMap<>();
+        sourceMeta.put("alias", alias);
+
+        sendContractEvent("dom", alias, currentTimestamp(), payload, sourceMeta);
     }
 
     private void sendWallEvent(String action, String alias, boolean isBid, int price, int size, long duration) {
-        synchronized (socketLock) {
-            if (socketWriter != null) {
-                String json = String.format(
-                        "{\"type\":\"wall\", \"action\":\"%s\", \"alias\":\"%s\", \"isBid\":%b, \"price\":%d, \"size\":%d, \"duration\":%d}",
-                        action, alias, isBid, price, size, duration);
-                socketWriter.println(json);
-            }
-        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("action", action);
+        payload.put("isBid", isBid);
+        payload.put("price", price);
+        payload.put("size", size);
+        payload.put("duration", duration);
+
+        Map<String, Object> sourceMeta = new LinkedHashMap<>();
+        sourceMeta.put("alias", alias);
+
+        sendContractEvent("wall", alias, currentTimestamp(), payload, sourceMeta);
     }
 
     @Override
@@ -700,14 +825,15 @@ public class AlertListener implements
     }
 
     private void sendDotEvent(String alias, boolean isBuy, double price, int size) {
-        synchronized (socketLock) {
-            if (socketWriter != null) {
-                String json = String.format(
-                        "{\"type\":\"dot\", \"alias\":\"%s\", \"isBuy\":%b, \"price\":%.2f, \"size\":%d}",
-                        alias, isBuy, price, size);
-                socketWriter.println(json);
-            }
-        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("isBuy", isBuy);
+        payload.put("price", price);
+        payload.put("size", size);
+
+        Map<String, Object> sourceMeta = new LinkedHashMap<>();
+        sourceMeta.put("alias", alias);
+
+        sendContractEvent("dot", alias, currentTimestamp(), payload, sourceMeta);
     }
 
     @Override
@@ -770,22 +896,21 @@ public class AlertListener implements
     }
 
     private void exportAlert(String time, int count, String symbol, String text, boolean popup) {
-        // Send to Socket (JSON)
-        synchronized (socketLock) {
-            if (socketWriter != null) {
-                String json = String.format(
-                        "{\"type\":\"alert\", \"timestamp\":\"%s\", \"symbol\":\"%s\", \"text\":\"%s\", \"count\":%d, \"popup\":%b}",
-                        time, symbol, text.replace("\"", "\\\""), count, popup);
-                socketWriter.println(json);
-                if (socketWriter.checkError()) {
-                    System.err.println("Socket write error detected.");
-                    logToUI(null, "ERROR: Socket write failed. Please click Reconnect.");
-                }
-            } else {
-                System.err.println("Internal Error: Socket not connected. Alert not sent.");
-                // logToUI(null, "WARNING: Not connected. Alert #" + count + " missed.");
-            }
+        if (socketWriter == null) {
+            System.err.println("Internal Error: Socket not connected. Alert not sent.");
+            return;
         }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("symbol", symbol);
+        payload.put("text", text);
+        payload.put("count", count);
+        payload.put("popup", popup);
+
+        Map<String, Object> sourceMeta = new LinkedHashMap<>();
+        sourceMeta.put("symbol", symbol);
+
+        sendContractEvent("alert", symbol, time, payload, sourceMeta);
     }
 
     @Override
