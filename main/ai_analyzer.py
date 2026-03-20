@@ -11,6 +11,7 @@ class AIAnalyzer:
         self.mt5_client = mt5_client
         self.raw_data_buffer = {}  # Map: symbol -> list of raw data dicts
         self.latest_state = {}     # Map: symbol -> current combined state
+        self.order_book = {}
         self.last_buffer_process_time = 0
         self.model_path = model_path
         
@@ -62,7 +63,7 @@ class AIAnalyzer:
         import json
         import os
         
-        msg_type = data.get("type", "unknown")
+        msg_type = data.get("event", data.get("type", "unknown"))
         if msg_type == "unknown":
             if "wyckoffVolume" in data: msg_type = "wyckoff"
             elif "vpPOC" in data: msg_type = "volumeprofile"
@@ -175,20 +176,27 @@ class AIAnalyzer:
         import time
         if not data: return
 
-        symbol = data.get("symbol", "EURUSD")
+        event = data.get("event", data.get("type", "indicator"))
+        payload = data.get("payload", data)
+        if not isinstance(payload, dict):
+            payload = data
+        source_meta = data.get("source_meta") or {}
+        symbol = data.get("instrument", data.get("symbol", source_meta.get("symbol", "EURUSD")))
         
         # Determine if this is a standard indicator or an alert
-        msg_type = data.get("type", "indicator")
+        msg_type = event
         
         if msg_type == "alert":
-            self.export_alert_csv(symbol, data)
+            alert_data = dict(data)
+            alert_data.update(payload)
+            self.export_alert_csv(symbol, alert_data)
             return
         elif msg_type == "dom":
-            action = data.get("action")
-            alias = data.get("alias")
-            is_bid = data.get("isBid")
-            price = data.get("price")
-            size = data.get("size")
+            action = payload.get("action", data.get("action"))
+            alias = payload.get("alias", data.get("alias", source_meta.get("alias", symbol)))
+            is_bid = payload.get("isBid", data.get("isBid"))
+            price = payload.get("price", data.get("price"))
+            size = payload.get("size", data.get("size"))
             
             # Update local order book state
             if alias not in self.order_book:
@@ -205,28 +213,33 @@ class AIAnalyzer:
             return
             
         elif msg_type == "dot":
-            is_buy = data.get("isBuy")
-            price = data.get("price")
-            size = data.get("size")
+            is_buy = payload.get("isBuy", data.get("isBuy"))
+            price = payload.get("price", data.get("price"))
+            size = payload.get("size", data.get("size"))
             print(f"DEBUG DOT: {symbol} | {'BUY' if is_buy else 'SELL'} | Price: {price} | Size: {size}")
             return
             
         elif msg_type == "wall":
-            is_bid = data.get("isBid")
-            price = data.get("price")
-            size = data.get("size")
-            duration = data.get("duration")
+            is_bid = payload.get("isBid", data.get("isBid"))
+            price = payload.get("price", data.get("price"))
+            size = payload.get("size", data.get("size"))
+            duration = payload.get("duration", data.get("duration"))
             print(f"DEBUG WALL: {symbol} | {'BID' if is_bid else 'ASK'} | Price: {price} | Size: {size} | Dur: {duration}s")
             return
             
         # Dynamic export for indicators
-        self.export_individual_csv(symbol, data)
+        merged_data = dict(data)
+        merged_data.update(payload)
+        merged_data["instrument"] = symbol
+        if "symbol" not in merged_data and "symbol" in source_meta:
+            merged_data["symbol"] = source_meta["symbol"]
+        self.export_individual_csv(symbol, merged_data)
         
         if symbol not in self.raw_data_buffer:
             self.raw_data_buffer[symbol] = []
             self.latest_state[symbol] = {}
             
-        self.raw_data_buffer[symbol].append(data)
+        self.raw_data_buffer[symbol].append(merged_data)
         
         now = time.time()
         if len(self.raw_data_buffer[symbol]) > 100 or (now - self.last_buffer_process_time > 2.0):
