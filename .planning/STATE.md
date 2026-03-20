@@ -5,32 +5,32 @@
 See: `.planning/PROJECT.md` (updated 2026-03-18)
 
 **Core value:** Market data and order-flow events move through the local pipeline into trustworthy, verifiable trading actions without manual glue code or silent failure.
-**Current focus:** Phase 1 - Normalize Event Contract
+**Current focus:** Phase 1 - Normalize Event Contract verification
 
 ## Current Position
 
 Phase: 1 of 5 (Normalize Event Contract)
-Plan: 1 of 3 executed for current phase
-Status: Wave 1 complete, Wave 2 ready
-Last activity: 2026-03-20 - Completed plan 01-01 and verified Bookmap contract emitter build
+Plan: 3 of 3 executed for current phase
+Status: Implementation complete, verification pending host environment checks
+Last activity: 2026-03-20 - Executed plans 01-02 and 01-03, captured verification blockers
 
-Progress: [###-------] 33%
+Progress: [#########-] 90%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
+- Total plans completed: 3
 - Average duration: 0.1 hours
-- Total execution time: 0.1 hours
+- Total execution time: 0.3 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1 | 1 | 0.1h | 0.1h |
+| 1 | 3 | 0.3h | 0.1h |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 complete
+- Last 5 plans: 01-01, 01-02, 01-03 complete
 - Trend: Stable
 
 ## Accumulated Context
@@ -44,6 +44,8 @@ Recent decisions affecting current work:
 - Init: Prioritize integration reliability over new indicator/strategy expansion
 - Phase 1 / 01-01: Lock the contract to explicit top-level envelope fields and push producer-specific details into `payload` and `source_meta`
 - Phase 1 / 01-01: Require Bookmap to emit producer timestamps for alert, dom, dot, and wall events
+- Phase 1 / 01-02: Normalize legacy producer shapes only at the Python boundary; downstream consumers should target the canonical envelope
+- Phase 1 / 01-03: Make `wyckoff_state` explicit at the cTrader source instead of relying on analyzer inference
 
 ### Pending Todos
 
@@ -51,11 +53,12 @@ None yet.
 
 ### Blockers/Concerns
 
-- `main/ai_analyzer.py` references `self.order_book` without initializing it
+- No Python 3 runtime is installed on this host, so `py -3 -m compileall main` cannot run here
+- The local .NET 10 SDK is missing workload resolver SDK folders, so `Build-CTraderProjects.ps1` fails before project compilation
 - GitNexus graph resources are partially unavailable locally despite repo metadata existing
 
 ## Session Continuity
 
 Last session: 2026-03-18 22:05
-Stopped at: Wave 1 complete, waiting on Wave 2 execution
-Resume file: `.planning/phases/01-normalize-event-contract/01-02-PLAN.md`
+Stopped at: Phase 1 implementation complete, waiting on verification environment
+Resume file: `.planning/phases/01-normalize-event-contract/01-VERIFICATION.md`

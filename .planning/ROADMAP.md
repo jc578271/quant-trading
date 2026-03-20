@@ -30,8 +30,8 @@ This roadmap turns the existing trading workspace into a coherent local pipeline
 
 Plans:
 - [x] 01-01: Audit current payload producers and capture the normalized event schema
-- [ ] 01-02: Patch ingest-side validation and obvious contract breakages in the Python bridge
-- [ ] 01-03: Document cTrader alignment points and unsupported contract edges
+- [x] 01-02: Patch ingest-side validation and obvious contract breakages in the Python bridge
+- [x] 01-03: Document cTrader alignment points and unsupported contract edges
 
 ### Phase 2: Harden Transport & Observability
 **Goal**: Make the local pipeline survive startup ordering, reconnects, and operational troubleshooting.
@@ -97,7 +97,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Normalize Event Contract | 1/3 | In progress | - |
+| 1. Normalize Event Contract | 3/3 | In verification | - |
 | 2. Harden Transport & Observability | 0/3 | Not started | - |
 | 3. Stabilize Signal State | 0/2 | Not started | - |
 | 4. Add Safe Execution Controls | 0/2 | Not started | - |
