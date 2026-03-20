@@ -386,13 +386,9 @@ namespace cAlgo
                 }
             }
 
-            return new Dictionary<string, object>
+            Dictionary<string, object> payload = new Dictionary<string, object>
             {
-                ["type"] = "volume_profile",
                 ["profile_type"] = profileType,
-                ["symbol"] = Symbol.Name,
-                ["timeframe"] = Chart.TimeFrame.ShortName,
-                ["timestamp"] = Bars.OpenTimes[index].ToString("o"),
                 ["open"] = Bars.OpenPrices[index],
                 ["high"] = Bars.HighPrices[index],
                 ["low"] = Bars.LowPrices[index],
@@ -408,6 +404,15 @@ namespace cAlgo
                 ["minMaxDelta"] = minMaxDelta,
                 ["spread"] = Symbol.Spread
             };
+
+            Dictionary<string, object> sourceMeta = new Dictionary<string, object>
+            {
+                ["symbol"] = Symbol.Name,
+                ["timeframe"] = Chart.TimeFrame.ShortName,
+                ["legacy_type"] = ExportEventName
+            };
+
+            return BuildContractEnvelope(index, payload, sourceMeta);
         }
 
         private void AppendDirectCsv(Dictionary<string, object> exportData)
@@ -431,8 +436,7 @@ namespace cAlgo
                 for (int i = 0; i < ExportCsvHeaders.Length; i++)
                 {
                     string key = ExportCsvHeaders[i];
-                    object value;
-                    exportData.TryGetValue(key, out value);
+                    object value = ResolveExportValue(exportData, key);
                     rowValues[i] = EscapeCsvValue(ConvertExportValue(value));
                 }
 
@@ -453,6 +457,38 @@ namespace cAlgo
                 return JsonSerializer.Serialize(value);
 
             return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+        }
+
+        private object ResolveExportValue(Dictionary<string, object> exportData, string key)
+        {
+            object value;
+            if (exportData.TryGetValue(key, out value))
+                return value;
+
+            if (key == "type" && exportData.TryGetValue("event", out value))
+                return value;
+
+            if (key == "symbol" || key == "timeframe")
+            {
+                if (exportData.TryGetValue("source_meta", out object sourceMetaObj) &&
+                    sourceMetaObj is Dictionary<string, object> sourceMeta &&
+                    sourceMeta.TryGetValue(key, out value))
+                {
+                    return value;
+                }
+
+                if (key == "symbol" && exportData.TryGetValue("instrument", out value))
+                    return value;
+            }
+
+            if (exportData.TryGetValue("payload", out object payloadObj) &&
+                payloadObj is Dictionary<string, object> payload &&
+                payload.TryGetValue(key, out value))
+            {
+                return value;
+            }
+
+            return null;
         }
 
         private string EscapeCsvValue(string value)

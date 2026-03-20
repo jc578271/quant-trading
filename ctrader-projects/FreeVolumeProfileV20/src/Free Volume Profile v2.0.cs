@@ -107,6 +107,31 @@ namespace cAlgo
             "minMaxDelta",
             "spread"
         };
+        private const string EventContractSchema = "event-contract/v1";
+        private const string EventSource = "ctrader";
+        private const string SourceInstanceName = "FreeVolumeProfileV20";
+        private const string ExportEventName = "volume_profile";
+
+        private string BuildExportEventId(int index)
+        {
+            return $"ctrader-{ExportEventName}-{Symbol.Name}-{Bars.OpenTimes[index]:o}";
+        }
+
+        private Dictionary<string, object> BuildContractEnvelope(int index, Dictionary<string, object> payload, Dictionary<string, object> sourceMeta)
+        {
+            return new Dictionary<string, object>
+            {
+                ["schema"] = EventContractSchema,
+                ["source"] = EventSource,
+                ["source_instance"] = SourceInstanceName,
+                ["event"] = ExportEventName,
+                ["event_id"] = BuildExportEventId(index),
+                ["instrument"] = Symbol.Name,
+                ["timestamp"] = Bars.OpenTimes[index].ToString("o"),
+                ["payload"] = payload,
+                ["source_meta"] = sourceMeta
+            };
+        }
 
         [Parameter("Export History Data", DefaultValue = true, Group = "==== Python AI Export ====")]
         public bool ExportHistory { get; set; }
