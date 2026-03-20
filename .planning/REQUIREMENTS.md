@@ -7,9 +7,9 @@
 
 ### Data Contract
 
-- [ ] **DATA-01**: Bookmap producers emit a documented JSON contract for alert, dot, wall, and DOM payloads over the local pipeline
-- [ ] **DATA-02**: The Python bridge validates malformed or version-mismatched payloads without crashing the ingest loop
-- [ ] **DATA-03**: cTrader-originated context can either map into the same event contract or be explicitly documented as unsupported in v1
+- [x] **DATA-01**: Bookmap producers emit a documented JSON contract for alert, dot, wall, and DOM payloads over the local pipeline
+- [x] **DATA-02**: The Python bridge validates malformed or version-mismatched payloads without crashing the ingest loop
+- [x] **DATA-03**: cTrader-originated context can either map into the same event contract or be explicitly documented as unsupported in v1
 
 ### Pipeline Reliability
 
@@ -57,9 +57,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DATA-01 | Phase 1 | Pending |
-| DATA-02 | Phase 1 | Pending |
-| DATA-03 | Phase 1 | Pending |
+| DATA-01 | Phase 1 | Complete |
+| DATA-02 | Phase 1 | Complete |
+| DATA-03 | Phase 1 | Complete |
 | PIPE-01 | Phase 2 | Pending |
 | PIPE-02 | Phase 2 | Pending |
 | PIPE-03 | Phase 2 | Pending |
@@ -77,4 +77,4 @@
 
 ---
 *Requirements defined: 2026-03-18*
-*Last updated: 2026-03-18 after initial definition*
+*Last updated: 2026-03-20 after Phase 1 completion*

@@ -10,7 +10,7 @@ This roadmap turns the existing trading workspace into a coherent local pipeline
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: Normalize Event Contract** - Make Bookmap/Python/cTrader pipeline inputs explicit and consistent
+- [x] **Phase 1: Normalize Event Contract** - Make Bookmap/Python/cTrader pipeline inputs explicit and consistent (completed 2026-03-20)
 - [ ] **Phase 2: Harden Transport & Observability** - Make the local pipeline reconnectable and diagnosable
 - [ ] **Phase 3: Stabilize Signal State** - Turn asynchronous records into explainable per-symbol state
 - [ ] **Phase 4: Add Safe Execution Controls** - Gate live execution behind validated inputs and explicit modes
@@ -97,7 +97,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Normalize Event Contract | 3/3 | In verification | - |
+| 1. Normalize Event Contract | 3/3 | Complete | 2026-03-20 |
 | 2. Harden Transport & Observability | 0/3 | Not started | - |
 | 3. Stabilize Signal State | 0/2 | Not started | - |
 | 4. Add Safe Execution Controls | 0/2 | Not started | - |
