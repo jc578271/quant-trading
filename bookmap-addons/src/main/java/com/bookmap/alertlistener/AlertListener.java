@@ -102,6 +102,7 @@ public class AlertListener implements
 
     // Files for persistence
     private final File configFile;
+    private String csvOutputPath = System.getProperty("user.home");
     // history files are now per-alias: AlertListener_history_[alias].csv
 
     // Per-instrument settings
@@ -284,12 +285,25 @@ public class AlertListener implements
     private void appendLogToFile(String alias, String csvLine) {
         String fileName = alias == null ? "AlertListener_history_system.csv"
                 : "AlertListener_history_" + sanitize(alias) + ".csv";
-        File file = new File(System.getProperty("user.home"), fileName);
+        File file = new File(getCsvOutputDirectory(), fileName);
         try {
             appendCsvLine(file, csvLine);
         } catch (IOException e) {
             System.err.println("Error writing to history log (" + fileName + "): " + e.getMessage());
         }
+    }
+
+    private File getCsvOutputDirectory() {
+        String configuredPath = csvOutputPath == null ? "" : csvOutputPath.trim();
+        File directory = configuredPath.isEmpty()
+                ? new File(System.getProperty("user.home"))
+                : new File(configuredPath);
+
+        if (!directory.exists()) {
+            directory.mkdirs();
+        }
+
+        return directory;
     }
 
     private String sanitize(String alias) {
@@ -312,7 +326,7 @@ public class AlertListener implements
                 }
             }
             if (countLabel != null) {
-                countLabel.setText("Total Alerts: " + alertCount);
+                countLabel.setText("Alerts: " + alertCount);
             }
         });
     }
@@ -696,17 +710,19 @@ public class AlertListener implements
         // Update the OrderBook state using the correct Bookmap utility method
         orderBook.onUpdate(isBid, price, size);
 
-        // Detect Add/Remove for general DOM events (size is now the NEW size)
+        // Emit realtime DOM updates for every size change at this price level.
         String action = null;
         if (prevSize == 0 && size > 0) {
             action = "add";
         } else if (prevSize > 0 && size == 0) {
             action = "remove";
+        } else if (prevSize != size) {
+            action = "update";
         }
 
-        // Send to Socket if action detected (simple add/remove to new price level)
+        // Send every DOM state transition to the realtime socket.
         if (action != null) {
-            sendDomEvent(action, alias, isBid, price, size);
+            sendDomEvent(action, alias, isBid, price, size, prevSize);
         }
 
         // Logic for Liquidity Wall Detection
@@ -744,12 +760,14 @@ public class AlertListener implements
         }
     }
 
-    private void sendDomEvent(String action, String alias, boolean isBid, int price, int size) {
+    private void sendDomEvent(String action, String alias, boolean isBid, int price, int size, long prevSize) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("action", action);
         payload.put("isBid", isBid);
         payload.put("price", price);
         payload.put("size", size);
+        payload.put("prevSize", prevSize);
+        payload.put("delta", size - prevSize);
 
         Map<String, Object> sourceMeta = new LinkedHashMap<>();
         sourceMeta.put("alias", alias);
@@ -779,6 +797,8 @@ public class AlertListener implements
     public void onTrade(String alias, double price, int size, TradeInfo tradeInfo) {
         // Bookmap API: true means the aggressive trade happened on the bid side.
         boolean isBidAggressor = tradeInfo.isBidAggressor;
+        sendDotEvent(alias, !isBidAggressor, price, size);
+
         // Aggregation is per-alias and keeps bid/ask aggressor volume separately.
         String key = alias;
         long currentMs = getCurrentTimeMs();
@@ -843,15 +863,13 @@ public class AlertListener implements
             InstrumentSettings settings = settingsMap.getOrDefault(trade.alias, defaultSettings);
             // Apply threshold to the TOTAL volume of the bubble, as is standard
             if (trade.getTotalAbsSize() >= settings.minDotVol) {
-                processFlush(trade, trade.getDelta());
+                processFlush(trade);
             }
         }
     }
 
-    private void processFlush(AggregatedTrade trade, int delta) {
-        boolean isNetBuy = delta > 0;
+    private void processFlush(AggregatedTrade trade) {
         logCsvRow(trade.alias, createDotCsvRow(currentTimestamp(), trade));
-        sendDotEvent(trade.alias, isNetBuy, trade.getVwap(), Math.abs(delta));
     }
 
     private void sendDotEvent(String alias, boolean isBuy, double price, int size) {
@@ -927,7 +945,6 @@ public class AlertListener implements
 
     private void exportAlert(String time, int count, String symbol, String text, boolean popup) {
         if (socketWriter == null) {
-            System.err.println("Internal Error: Socket not connected. Alert not sent.");
             return;
         }
 
@@ -956,8 +973,8 @@ public class AlertListener implements
         gbc.insets = new Insets(2, 2, 2, 2);
 
         // Row 0: Status and Reconnect Button
-        countLabel = new JLabel("Total Alerts: " + alertCount);
-        countLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        countLabel = new JLabel("Alerts: " + alertCount);
+        countLabel.setFont(new Font("Arial", Font.BOLD, 12));
         countLabel.setForeground(new Color(0, 200, 100));
         gbc.gridx = 0;
         gbc.gridy = 0;
@@ -993,62 +1010,62 @@ public class AlertListener implements
         fgbc.gridx = 0;
         fgbc.gridy = 0;
         fgbc.weightx = 0.3;
-        filterArea.add(new JLabel("Dot Vol:"), fgbc);
+        filterArea.add(new JLabel("Dot:"), fgbc);
         fgbc.gridx = 1;
         fgbc.gridy = 0;
         fgbc.weightx = 0.7;
-        JTextField dotVolField = new JTextField(String.valueOf(settings.minDotVol), 4);
+        JTextField dotVolField = new JTextField(String.valueOf(settings.minDotVol), 3);
         filterArea.add(dotVolField, fgbc);
 
         fgbc.gridx = 0;
         fgbc.gridy = 1;
         fgbc.weightx = 0.3;
-        filterArea.add(new JLabel("Agg Win(ms):"), fgbc);
+        filterArea.add(new JLabel("Agg(ms):"), fgbc);
         fgbc.gridx = 1;
         fgbc.gridy = 1;
         fgbc.weightx = 0.7;
-        JTextField aggWinField = new JTextField(String.valueOf(settings.aggWindowMs), 4);
+        JTextField aggWinField = new JTextField(String.valueOf(settings.aggWindowMs), 3);
         filterArea.add(aggWinField, fgbc);
 
         fgbc.gridx = 0;
         fgbc.gridy = 2;
         fgbc.weightx = 0.3;
-        filterArea.add(new JLabel("Max Dur(ms):"), fgbc);
+        filterArea.add(new JLabel("Max(ms):"), fgbc);
         fgbc.gridx = 1;
         fgbc.gridy = 2;
         fgbc.weightx = 0.7;
-        JTextField maxAggField = new JTextField(String.valueOf(settings.maxAggMs), 4);
+        JTextField maxAggField = new JTextField(String.valueOf(settings.maxAggMs), 3);
         filterArea.add(maxAggField, fgbc);
 
         // COLUMN 2: WALL SETTINGS (Right)
         fgbc.gridx = 2;
         fgbc.gridy = 0;
         fgbc.weightx = 0.3;
-        filterArea.add(new JLabel("Wall Added:"), fgbc);
+        filterArea.add(new JLabel("Added:"), fgbc);
         fgbc.gridx = 3;
         fgbc.gridy = 0;
         fgbc.weightx = 0.7;
-        JTextField wallAddedField = new JTextField(String.valueOf(settings.minWallSizeAdded), 4);
+        JTextField wallAddedField = new JTextField(String.valueOf(settings.minWallSizeAdded), 3);
         filterArea.add(wallAddedField, fgbc);
 
         fgbc.gridx = 2;
         fgbc.gridy = 1;
         fgbc.weightx = 0.3;
-        filterArea.add(new JLabel("Wall Removed:"), fgbc);
+        filterArea.add(new JLabel("Removed:"), fgbc);
         fgbc.gridx = 3;
         fgbc.gridy = 1;
         fgbc.weightx = 0.7;
-        JTextField wallRemovedField = new JTextField(String.valueOf(settings.minWallSizeRemoved), 4);
+        JTextField wallRemovedField = new JTextField(String.valueOf(settings.minWallSizeRemoved), 3);
         filterArea.add(wallRemovedField, fgbc);
 
         fgbc.gridx = 2;
         fgbc.gridy = 2;
         fgbc.weightx = 0.3;
-        filterArea.add(new JLabel("Wall Dur(s):"), fgbc);
+        filterArea.add(new JLabel("Dur(s):"), fgbc);
         fgbc.gridx = 3;
         fgbc.gridy = 2;
         fgbc.weightx = 0.7;
-        JTextField wallDurField = new JTextField(String.valueOf(settings.minWallDur), 4);
+        JTextField wallDurField = new JTextField(String.valueOf(settings.minWallDur), 3);
         filterArea.add(wallDurField, fgbc);
 
         gbc.gridx = 0;
@@ -1057,8 +1074,18 @@ public class AlertListener implements
         gbc.insets = new Insets(5, 2, 5, 2);
         topPanel.add(filterArea, gbc);
 
-        // Row 3: Apply Button
-        JButton applyBtn = new JButton("Apply Settings [" + indicatorName + "]");
+        // Row 3: CSV Output Path
+        JPanel csvPathPanel = new JPanel(new BorderLayout(0, 2));
+        csvPathPanel.add(new JLabel("CSV Path:"), BorderLayout.NORTH);
+        JTextField csvOutputPathField = new JTextField(csvOutputPath, 18);
+        csvPathPanel.add(csvOutputPathField, BorderLayout.CENTER);
+
+        gbc.gridy = 3;
+        gbc.insets = new Insets(2, 2, 5, 2);
+        topPanel.add(csvPathPanel, gbc);
+
+        // Row 4: Apply Button
+        JButton applyBtn = new JButton("Apply");
         applyBtn.setMargin(new Insets(2, 10, 2, 10));
         applyBtn.addActionListener(e -> {
             try {
@@ -1068,17 +1095,19 @@ public class AlertListener implements
                 settings.minWallDur = Integer.parseInt(wallDurField.getText().trim());
                 settings.aggWindowMs = Integer.parseInt(aggWinField.getText().trim());
                 settings.maxAggMs = Integer.parseInt(maxAggField.getText().trim());
+                csvOutputPath = csvOutputPathField.getText().trim();
+                getCsvOutputDirectory();
                 saveConfig();
                 logToUI(indicatorName,
                         "SYSTEM: Filters saved for " + indicatorName + ". Dot:" + settings.minDotVol + " Added:"
                                 + settings.minWallSizeAdded + " Removed:" + settings.minWallSizeRemoved + " Dur:"
                                 + settings.minWallDur + "s Agg:" + settings.aggWindowMs + "ms MaxDur:"
-                                + settings.maxAggMs + "ms");
+                                + settings.maxAggMs + "ms CSV Path:" + getCsvOutputDirectory().getAbsolutePath());
             } catch (NumberFormatException ex) {
                 logToUI(indicatorName, "ERROR: Invalid filter values for " + indicatorName + ". Please enter numbers.");
             }
         });
-        gbc.gridy = 3;
+        gbc.gridy = 4;
         gbc.insets = new Insets(2, 2, 10, 2);
         topPanel.add(applyBtn, gbc);
 
@@ -1131,7 +1160,7 @@ public class AlertListener implements
         exportButton.addActionListener(e -> {
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             String fileName = "AlertListener_Export_" + sanitize(indicatorName) + "_" + timestamp + ".csv";
-            File exportFile = new File(System.getProperty("user.home"), fileName);
+            File exportFile = new File(getCsvOutputDirectory(), fileName);
             try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(exportFile)))) {
                 out.print(areaForThisTab.getText());
                 logToUI(indicatorName, "SUCCESS: Log exported to " + exportFile.getAbsolutePath());
@@ -1159,7 +1188,7 @@ public class AlertListener implements
                 // Collect all instrument names from keys (keys look like INSTRUMENT.minDotVol)
                 Set<String> aliases = new HashSet<>();
                 for (String key : prop.stringPropertyNames()) {
-                    if (key.contains(".")) {
+                    if (key.contains(".") && !key.startsWith("global.")) {
                         aliases.add(key.substring(0, key.lastIndexOf('.')));
                     }
                 }
@@ -1174,6 +1203,8 @@ public class AlertListener implements
                     s.maxAggMs = Integer.parseInt(prop.getProperty(alias + ".maxAggMs", "1000"));
                     settingsMap.put(alias, s);
                 }
+
+                csvOutputPath = prop.getProperty("global.csvOutputPath", System.getProperty("user.home"));
 
                 System.out.println("Config loaded for " + settingsMap.size() + " instruments.");
             } catch (IOException | NumberFormatException ex) {
@@ -1195,6 +1226,7 @@ public class AlertListener implements
                 prop.setProperty(alias + ".aggWindowMs", String.valueOf(s.aggWindowMs));
                 prop.setProperty(alias + ".maxAggMs", String.valueOf(s.maxAggMs));
             }
+            prop.setProperty("global.csvOutputPath", getCsvOutputDirectory().getAbsolutePath());
             prop.store(output, null);
         } catch (IOException io) {
             System.err.println("Error saving config: " + io.getMessage());
@@ -1233,12 +1265,12 @@ public class AlertListener implements
     }
 
     private File getCsvHistoryFile(String alias) {
-        return new File(System.getProperty("user.home"),
+        return new File(getCsvOutputDirectory(),
                 "AlertListener_history_" + sanitize(alias) + ".csv");
     }
 
     private File getLegacyHistoryFile(String alias) {
-        return new File(System.getProperty("user.home"),
+        return new File(getCsvOutputDirectory(),
                 "AlertListener_history_" + sanitize(alias) + ".log");
     }
 

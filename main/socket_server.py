@@ -8,6 +8,7 @@ from event_contract import normalize_record
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 QUARANTINE_FILE = "quarantine_events.jsonl"
+SOCKET_EVENTS_FILE = "socket_events.jsonl"
 
 
 def quarantine_record(received_at, reason, raw):
@@ -21,6 +22,20 @@ def quarantine_record(received_at, reason, raw):
             quarantine_file.write(json.dumps(quarantine_event, ensure_ascii=True) + "\n")
     except OSError as error:
         logging.error(f"Failed to quarantine event: {error}")
+
+
+def append_socket_event(received_at, client_label, raw, normalized):
+    socket_event = {
+        "received_at": received_at,
+        "client": client_label,
+        "raw": raw,
+        "normalized": normalized,
+    }
+    try:
+        with open(SOCKET_EVENTS_FILE, "a", encoding="utf-8") as socket_events_file:
+            socket_events_file.write(json.dumps(socket_event, ensure_ascii=True) + "\n")
+    except OSError as error:
+        logging.error(f"Failed to write socket event log: {error}")
 
 class SocketServer:
     def __init__(self, host='127.0.0.1', port=5555, callback=None):
@@ -74,6 +89,8 @@ class SocketServer:
                     if client_label is None:
                         client_label = self._format_client_label(normalized_record)
                         logging.info(f"Client {addr} identified as {client_label}")
+
+                    append_socket_event(received_at, client_label, record, normalized_record)
 
                     if not live_socket_logged:
                         source_name = normalized_record.get("source_instance") or normalized_record.get("source") or "unknown"
