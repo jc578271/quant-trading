@@ -94,7 +94,7 @@ namespace cAlgo
                 CreateMiniVPs(index);
 
                 // Export recalculated history
-                if (ExportHistory)
+                if (_isManualCsvExportInProgress)
                 {
                     if (ProfileParams.EnableMainVP && VP_VolumesRank.Count > 0)
                         ExportCsvData(index, "main", VP_VolumesRank, VP_VolumesRank_Up, VP_VolumesRank_Down, VP_DeltaRank, VP_MinMaxDelta);

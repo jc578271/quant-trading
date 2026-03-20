@@ -1683,11 +1683,12 @@ namespace cAlgo
             }
 
             // TCP SOCKET EXPORT LOGIC 
-            if (ExportHistory)
+            if (_isManualCsvExportInProgress)
             {
                 ExportCsvData(iStart);
             }
-            else if (IsLastBar)
+
+            if (IsLastBar)
             {
                 SendSocketData(iStart);
             }

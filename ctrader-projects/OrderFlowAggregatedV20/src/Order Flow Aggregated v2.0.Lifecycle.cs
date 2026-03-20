@@ -233,6 +233,18 @@ namespace cAlgo
             };
             _exportButton.Click += ExportEvent;
             panel.AddChild(_exportButton);
+
+            Button reconnectButton = new()
+            {
+                Text = "Reconnect",
+                Padding = 0,
+                Height = 22,
+                Width = 75,
+                Margin = 2,
+                BackgroundColor = btnColor
+            };
+            reconnectButton.Click += ReconnectEvent;
+            panel.AddChild(reconnectButton);
         }
 
         private void HiddenEvent(ButtonClickEventArgs obj)
@@ -254,9 +266,53 @@ namespace cAlgo
                 }
                 _tcpClient = new TcpClient("127.0.0.1", 5555);
                 _tcpStream = _tcpClient.GetStream();
+                SendConnectionHello();
                 Print("Successfully connected to Python Socket (OrderFlow Exporter)");
             } catch (Exception ex) {
                 Print("Socket Error: " + ex.Message);
+            }
+        }
+
+        private void SendConnectionHello()
+        {
+            if (_tcpStream == null)
+                return;
+
+            try
+            {
+                var hello = new Dictionary<string, object>
+                {
+                    ["kind"] = "connection_hello",
+                    ["source"] = EventSource,
+                    ["source_instance"] = SourceInstanceName,
+                    ["instrument"] = Symbol.Name,
+                    ["timestamp"] = DateTime.UtcNow.ToString("o")
+                };
+
+                string jsonString = JsonSerializer.Serialize(hello) + "\n";
+                byte[] dataBytes = Encoding.UTF8.GetBytes(jsonString);
+                _tcpStream.Write(dataBytes, 0, dataBytes.Length);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        private void ReconnectEvent(ButtonClickEventArgs obj)
+        {
+            try
+            {
+                try { _tcpStream?.Close(); } catch {}
+                try { _tcpClient?.Close(); } catch {}
+
+                _tcpStream = null;
+                _tcpClient = null;
+
+                ConnectSocket();
+            }
+            catch (Exception ex)
+            {
+                Print("Reconnect Error: " + ex.Message);
             }
         }
 
@@ -266,16 +322,11 @@ namespace cAlgo
             try
             {
                 ConnectSocket();
-
-                bool originalExport = ExportHistory;
-                ExportHistory = true;
                 _isManualCsvExportInProgress = true;
 
                 Print("Starting Order Flow Export...");
                 ClearAndRecalculate();
                 Print("Order Flow Export Finished.");
-
-                ExportHistory = originalExport;
             }
             catch (Exception ex)
             {
@@ -443,7 +494,7 @@ namespace cAlgo
 
         private void AppendDirectCsv(Dictionary<string, object> exportData)
         {
-            if (!DirectCsvExport || !_isManualCsvExportInProgress)
+            if (!_isManualCsvExportInProgress)
                 return;
 
             string outputFolder = string.IsNullOrWhiteSpace(CsvOutputFolder) ? DefaultCsvOutputFolder : CsvOutputFolder.Trim();

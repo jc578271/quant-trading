@@ -213,18 +213,9 @@ class AIAnalyzer:
             return
             
         elif msg_type == "dot":
-            is_buy = payload.get("isBuy", data.get("isBuy"))
-            price = payload.get("price", data.get("price"))
-            size = payload.get("size", data.get("size"))
-            print(f"DEBUG DOT: {symbol} | {'BUY' if is_buy else 'SELL'} | Price: {price} | Size: {size}")
             return
             
         elif msg_type == "wall":
-            is_bid = payload.get("isBid", data.get("isBid"))
-            price = payload.get("price", data.get("price"))
-            size = payload.get("size", data.get("size"))
-            duration = payload.get("duration", data.get("duration"))
-            print(f"DEBUG WALL: {symbol} | {'BID' if is_bid else 'ASK'} | Price: {price} | Size: {size} | Dur: {duration}s")
             return
             
         # Dynamic export for indicators

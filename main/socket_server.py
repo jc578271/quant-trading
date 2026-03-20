@@ -29,9 +29,22 @@ class SocketServer:
         self.callback = callback
         self.server = None
 
+    @staticmethod
+    def _format_client_label(record):
+        source = record.get("source", "unknown")
+        source_instance = record.get("source_instance", "unknown")
+        instrument = record.get("instrument") or "unknown-instrument"
+        return f"{source}/{source_instance} [{instrument}]"
+
+    @staticmethod
+    def _is_connection_hello(record):
+        return isinstance(record, dict) and record.get("kind") == "connection_hello"
+
     async def handle_client(self, reader, writer):
         addr = writer.get_extra_info('peername')
-        logging.info(f"Connected from cTrader at {addr}")
+        client_label = None
+        live_socket_logged = False
+        logging.info(f"Connection opened from {addr}, awaiting client identity")
         
         while True:
             try:
@@ -46,24 +59,42 @@ class SocketServer:
                     
                 try:
                     record = json.loads(message)
+                    if self._is_connection_hello(record):
+                        client_label = self._format_client_label(record)
+                        logging.info(f"Client {addr} identified as {client_label}")
+                        continue
+
                     received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                     normalized_record, rejection_reason = normalize_record(record, received_at)
                     if rejection_reason:
                         quarantine_record(received_at, rejection_reason, record)
-                        logging.error(f"Rejected event: {rejection_reason}")
+                        rejected_label = client_label or f"unidentified client {addr}"
+                        logging.error(f"Rejected event from {rejected_label}: {rejection_reason}")
                         continue
+                    if client_label is None:
+                        client_label = self._format_client_label(normalized_record)
+                        logging.info(f"Client {addr} identified as {client_label}")
+
+                    if not live_socket_logged:
+                        source_name = normalized_record.get("source_instance") or normalized_record.get("source") or "unknown"
+                        logging.info(f"LIVE SOCKET ON: {source_name}")
+                        live_socket_logged = True
+
                     if self.callback:
                         self.callback(normalized_record)
                 except json.JSONDecodeError:
-                    logging.error(f"Malformed JSON from cTrader: {message[:100]}...")
+                    malformed_label = client_label or f"unidentified client {addr}"
+                    logging.error(f"Malformed JSON from {malformed_label}: {message[:100]}...")
                         
             except ConnectionResetError:
                 break
             except Exception as e:
-                logging.error(f"Socket error: {e}")
+                error_label = client_label or f"unidentified client {addr}"
+                logging.error(f"Socket error from {error_label}: {e}")
                 break
 
-        logging.info(f"cTrader client {addr} disconnected.")
+        disconnect_label = client_label or f"unidentified client {addr}"
+        logging.info(f"Client {disconnect_label} disconnected.")
         writer.close()
         await writer.wait_closed()
 

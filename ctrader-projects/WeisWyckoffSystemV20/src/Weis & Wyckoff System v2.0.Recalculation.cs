@@ -75,7 +75,7 @@ namespace cAlgo
                 if (ShowWicks && BooleanUtils.isRenkoChart)
                     RenkoWicks(index);
 
-                if (ExportHistory)
+                if (_isManualCsvExportInProgress)
                     ExportCsvData(index);
             }
 

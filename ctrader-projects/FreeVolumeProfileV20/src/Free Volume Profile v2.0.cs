@@ -133,12 +133,6 @@ namespace cAlgo
             };
         }
 
-        [Parameter("Export History Data", DefaultValue = true, Group = "==== Python AI Export ====")]
-        public bool ExportHistory { get; set; }
-
-        [Parameter("Direct CSV Export", DefaultValue = true, Group = "==== Python AI Export ====")]
-        public bool DirectCsvExport { get; set; }
-
         [Parameter("CSV Output Folder", DefaultValue = DefaultCsvOutputFolder, Group = "==== Python AI Export ====")]
         public string CsvOutputFolder { get; set; }
 

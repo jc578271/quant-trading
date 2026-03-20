@@ -232,14 +232,11 @@ public class AlertListener implements
         new Thread(() -> {
             synchronized (socketLock) {
                 try {
-                    // Close existing if open
-                    if (socketWriter != null)
-                        socketWriter.close();
-                    if (socket != null)
-                        socket.close();
+                    closeSocketSilently();
 
                     socket = new Socket(HOST, PORT);
                     socketWriter = new PrintWriter(socket.getOutputStream(), true);
+                    sendConnectionHello();
                     String msg = "Successfully connected to Python Socket (ai_analyzer)";
                     System.out.println(msg);
                     logToUI(null, "SYSTEM: " + msg);
@@ -252,6 +249,25 @@ public class AlertListener implements
                 }
             }
         }).start();
+    }
+
+    private void closeSocketSilently() {
+        try {
+            if (socketWriter != null) {
+                socketWriter.close();
+            }
+        } catch (Exception ignored) {
+        }
+
+        try {
+            if (socket != null) {
+                socket.close();
+            }
+        } catch (Exception ignored) {
+        }
+
+        socketWriter = null;
+        socket = null;
     }
 
     private String logToUI(String alias, String message) {
@@ -326,10 +342,24 @@ public class AlertListener implements
 
             socketWriter.println(toJson(envelope));
             if (socketWriter.checkError()) {
-                System.err.println("Socket write error detected.");
-                logToUI(null, "ERROR: Socket write failed. Please click Reconnect.");
+                closeSocketSilently();
             }
         }
+    }
+
+    private void sendConnectionHello() {
+        if (socketWriter == null) {
+            return;
+        }
+
+        Map<String, Object> hello = new LinkedHashMap<>();
+        hello.put("kind", "connection_hello");
+        hello.put("source", EVENT_SOURCE);
+        hello.put("source_instance", EVENT_SOURCE_INSTANCE);
+        hello.put("instrument", "bookmap");
+        hello.put("timestamp", currentTimestamp());
+
+        socketWriter.println(toJson(hello));
     }
 
     private String buildEventId(String event, String instrument, String timestamp) {
