@@ -306,6 +306,49 @@ public class AlertListener implements
         return directory;
     }
 
+    private int migrateCsvOutputFiles(File sourceDirectory, File targetDirectory) {
+        if (sourceDirectory == null || targetDirectory == null || sourceDirectory.equals(targetDirectory) || !sourceDirectory.exists()) {
+            return 0;
+        }
+
+        File[] filesToMove = sourceDirectory.listFiles((dir, name) ->
+                name.startsWith("AlertListener_") && (name.endsWith(".csv") || name.endsWith(".log")));
+        if (filesToMove == null || filesToMove.length == 0) {
+            return 0;
+        }
+
+        int movedCount = 0;
+        for (File sourceFile : filesToMove) {
+            File targetFile = new File(targetDirectory, sourceFile.getName());
+            if (targetFile.exists()) {
+                continue;
+            }
+
+            try {
+                Files.move(sourceFile.toPath(), targetFile.toPath());
+                movedCount++;
+            } catch (IOException e) {
+                System.err.println("Error migrating file " + sourceFile.getName() + ": " + e.getMessage());
+            }
+        }
+
+        return movedCount;
+    }
+
+    private void openCsvOutputDirectory(String alias) {
+        File directory = getCsvOutputDirectory();
+        try {
+            if (!Desktop.isDesktopSupported()) {
+                logToUI(alias, "ERROR: Desktop integration is not supported on this machine.");
+                return;
+            }
+
+            Desktop.getDesktop().open(directory);
+        } catch (IOException e) {
+            logToUI(alias, "ERROR: Failed to open CSV folder: " + e.getMessage());
+        }
+    }
+
     private String sanitize(String alias) {
         return alias.replaceAll("[^a-zA-Z0-9.-]", "_");
     }
@@ -1089,6 +1132,7 @@ public class AlertListener implements
         applyBtn.setMargin(new Insets(2, 10, 2, 10));
         applyBtn.addActionListener(e -> {
             try {
+                File previousOutputDirectory = getCsvOutputDirectory();
                 settings.minDotVol = Integer.parseInt(dotVolField.getText().trim());
                 settings.minWallSizeAdded = Integer.parseInt(wallAddedField.getText().trim());
                 settings.minWallSizeRemoved = Integer.parseInt(wallRemovedField.getText().trim());
@@ -1096,13 +1140,15 @@ public class AlertListener implements
                 settings.aggWindowMs = Integer.parseInt(aggWinField.getText().trim());
                 settings.maxAggMs = Integer.parseInt(maxAggField.getText().trim());
                 csvOutputPath = csvOutputPathField.getText().trim();
-                getCsvOutputDirectory();
+                File currentOutputDirectory = getCsvOutputDirectory();
+                int migratedFiles = migrateCsvOutputFiles(previousOutputDirectory, currentOutputDirectory);
                 saveConfig();
                 logToUI(indicatorName,
                         "SYSTEM: Filters saved for " + indicatorName + ". Dot:" + settings.minDotVol + " Added:"
                                 + settings.minWallSizeAdded + " Removed:" + settings.minWallSizeRemoved + " Dur:"
                                 + settings.minWallDur + "s Agg:" + settings.aggWindowMs + "ms MaxDur:"
-                                + settings.maxAggMs + "ms CSV Path:" + getCsvOutputDirectory().getAbsolutePath());
+                                + settings.maxAggMs + "ms CSV Path:" + currentOutputDirectory.getAbsolutePath()
+                                + " Migrated:" + migratedFiles);
             } catch (NumberFormatException ex) {
                 logToUI(indicatorName, "ERROR: Invalid filter values for " + indicatorName + ". Please enter numbers.");
             }
@@ -1156,21 +1202,11 @@ public class AlertListener implements
             }
         });
 
-        JButton exportButton = new JButton("Export Log");
-        exportButton.addActionListener(e -> {
-            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-            String fileName = "AlertListener_Export_" + sanitize(indicatorName) + "_" + timestamp + ".csv";
-            File exportFile = new File(getCsvOutputDirectory(), fileName);
-            try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(exportFile)))) {
-                out.print(areaForThisTab.getText());
-                logToUI(indicatorName, "SUCCESS: Log exported to " + exportFile.getAbsolutePath());
-            } catch (IOException ex) {
-                logToUI(indicatorName, "ERROR: Failed to export log: " + ex.getMessage());
-            }
-        });
+        JButton openFolderButton = new JButton("Open Folder");
+        openFolderButton.addActionListener(e -> openCsvOutputDirectory(indicatorName));
 
         bottomPanel.add(clearButton);
-        bottomPanel.add(exportButton);
+        bottomPanel.add(openFolderButton);
 
         panel.add(bottomPanel, BorderLayout.SOUTH);
 
