@@ -649,16 +649,48 @@ namespace cAlgo
                 if (writeHeader)
                     writer.WriteLine(string.Join(",", ExportCsvHeaders));
 
-                string[] rowValues = new string[ExportCsvHeaders.Length];
+                var payload = exportData["payload"] as Dictionary<string, object>;
+                var sourceMeta = exportData["source_meta"] as Dictionary<string, object>;
+                if (payload == null || sourceMeta == null)
+                    return;
 
-                for (int i = 0; i < ExportCsvHeaders.Length; i++)
+                Dictionary<double, double> volumesRank = GetDoubleDictionary(payload, "volumesRank");
+                Dictionary<double, double> volumesRankUp = GetDoubleDictionary(payload, "volumesRankUp");
+                Dictionary<double, double> volumesRankDown = GetDoubleDictionary(payload, "volumesRankDown");
+                Dictionary<double, double> deltaRank = GetDoubleDictionary(payload, "deltaRank");
+                double[] minMaxDelta = GetMinMaxDelta(payload);
+
+                double[] orderedPriceLevels = volumesRank.Keys
+                    .Concat(volumesRankUp.Keys)
+                    .Concat(volumesRankDown.Keys)
+                    .Concat(deltaRank.Keys)
+                    .Distinct()
+                    .OrderBy(price => price)
+                    .ToArray();
+
+                foreach (double priceLevel in orderedPriceLevels)
                 {
-                    string key = ExportCsvHeaders[i];
-                    object value = ResolveExportValue(exportData, key);
-                    rowValues[i] = EscapeCsvValue(ConvertExportValue(value));
-                }
+                    string[] rowValues = new string[ExportCsvHeaders.Length];
 
-                writer.WriteLine(string.Join(",", rowValues));
+                    for (int i = 0; i < ExportCsvHeaders.Length; i++)
+                    {
+                        string key = ExportCsvHeaders[i];
+                        object value = ResolveFlattenedExportValue(
+                            exportData,
+                            sourceMeta,
+                            payload,
+                            key,
+                            priceLevel,
+                            volumesRank,
+                            volumesRankUp,
+                            volumesRankDown,
+                            deltaRank,
+                            minMaxDelta);
+                        rowValues[i] = EscapeCsvValue(ConvertExportValue(value));
+                    }
+
+                    writer.WriteLine(string.Join(",", rowValues));
+                }
             }
         }
 
@@ -705,6 +737,85 @@ namespace cAlgo
             {
                 return value;
             }
+
+            return null;
+        }
+
+        private Dictionary<double, double> GetDoubleDictionary(Dictionary<string, object> payload, string key)
+        {
+            if (!payload.TryGetValue(key, out object value) || value == null)
+                return new Dictionary<double, double>();
+
+            if (value is Dictionary<double, double> doubleDictionary)
+                return new Dictionary<double, double>(doubleDictionary);
+
+            if (value is Dictionary<double, int> intDictionary)
+                return intDictionary.ToDictionary(entry => entry.Key, entry => (double)entry.Value);
+
+            return new Dictionary<double, double>();
+        }
+
+        private double[] GetMinMaxDelta(Dictionary<string, object> payload)
+        {
+            if (payload.TryGetValue("minMaxDelta", out object value))
+            {
+                if (value is int[] intArray)
+                    return intArray.Select(number => (double)number).ToArray();
+
+                if (value is double[] doubleArray)
+                    return doubleArray;
+            }
+
+            return new double[] { 0, 0 };
+        }
+
+        private object ResolveFlattenedExportValue(
+            Dictionary<string, object> exportData,
+            Dictionary<string, object> sourceMeta,
+            Dictionary<string, object> payload,
+            string key,
+            double priceLevel,
+            Dictionary<double, double> volumesRank,
+            Dictionary<double, double> volumesRankUp,
+            Dictionary<double, double> volumesRankDown,
+            Dictionary<double, double> deltaRank,
+            double[] minMaxDelta)
+        {
+            switch (key)
+            {
+                case "symbol":
+                    return ResolveSourceMetaValue(exportData, sourceMeta, "symbol");
+                case "timeframe":
+                    return ResolveSourceMetaValue(exportData, sourceMeta, "timeframe");
+                case "price_level":
+                    return priceLevel;
+                case "volume_total":
+                    return volumesRank.TryGetValue(priceLevel, out double totalVolume) ? totalVolume : 0;
+                case "volume_buy":
+                    return volumesRankUp.TryGetValue(priceLevel, out double buyVolume) ? buyVolume : 0;
+                case "volume_sell":
+                    return volumesRankDown.TryGetValue(priceLevel, out double sellVolume) ? sellVolume : 0;
+                case "delta":
+                    return deltaRank.TryGetValue(priceLevel, out double delta) ? delta : 0;
+                case "min_delta":
+                    return minMaxDelta.Length > 0 ? minMaxDelta[0] : 0;
+                case "max_delta":
+                    return minMaxDelta.Length > 1 ? minMaxDelta[1] : 0;
+                default:
+                    return payload.TryGetValue(key, out object value) ? value : ResolveExportValue(exportData, key);
+            }
+        }
+
+        private object ResolveSourceMetaValue(
+            Dictionary<string, object> exportData,
+            Dictionary<string, object> sourceMeta,
+            string key)
+        {
+            if (sourceMeta.TryGetValue(key, out object value))
+                return value;
+
+            if (key == "symbol" && exportData.TryGetValue("instrument", out value))
+                return value;
 
             return null;
         }

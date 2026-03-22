@@ -12,3 +12,4 @@ __pycache__
 .ctrader-indicators-test/
 .tmp/
 runtime/
+logs/

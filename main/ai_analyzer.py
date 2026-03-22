@@ -262,15 +262,13 @@ class AIAnalyzer:
             
         elif msg_type == "wall":
             return
-            
-        # Dynamic export for indicators
+
         merged_data = dict(data)
         merged_data.update(payload)
         merged_data["instrument"] = symbol
         if "symbol" not in merged_data and "symbol" in source_meta:
             merged_data["symbol"] = source_meta["symbol"]
-        self.export_individual_csv(symbol, merged_data)
-        
+
         if symbol not in self.raw_data_buffer:
             self.raw_data_buffer[symbol] = []
             self.latest_state[symbol] = {}

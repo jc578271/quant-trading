@@ -155,7 +155,6 @@ namespace cAlgo
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
         private static readonly string[] ExportCsvHeaders =
         {
-            "type",
             "symbol",
             "timeframe",
             "timestamp",
@@ -163,12 +162,14 @@ namespace cAlgo
             "high",
             "low",
             "close",
-            "volumesRank",
-            "volumesRankUp",
-            "volumesRankDown",
-            "deltaRank",
-            "minMaxDelta",
-            "spread"
+            "spread",
+            "price_level",
+            "volume_total",
+            "volume_buy",
+            "volume_sell",
+            "delta",
+            "min_delta",
+            "max_delta"
         };
         private const string EventContractSchema = "event-contract/v1";
         private const string EventSource = "ctrader";
