@@ -88,7 +88,7 @@ namespace cAlgo
         private NetworkStream _networkStream;
         private Button _exportButton;
         private bool _isManualCsvExportInProgress;
-        private const string DefaultCsvOutputFolder = @"D:\projects\quant-trading";
+        private const string DefaultCsvOutputFolder = @"D:\projects\quant-trading\logs";
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
         private static readonly string[] ExportCsvHeaders =
         {

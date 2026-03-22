@@ -196,6 +196,8 @@ namespace cAlgo
 
         protected override void OnTimer()
         {
+            RunSocketHeartbeat();
+
             if (timerHandler.isAsyncLoading)
             {
                 if (!TickObjs.startAsyncLoading) {
@@ -238,7 +240,7 @@ namespace cAlgo
                     DrawOnScreen("");
                     timerHandler.isAsyncLoading = false;
                     ClearAndRecalculate();
-                    Timer.Stop();
+                    Timer.Start(TimeSpan.FromSeconds(1));
                 }
             }
         }

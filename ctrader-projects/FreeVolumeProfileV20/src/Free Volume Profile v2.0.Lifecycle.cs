@@ -18,11 +18,14 @@ namespace cAlgo
     public partial class FreeVolumeProfileV20 : Indicator
     {
         private static readonly TimeSpan SocketReconnectDelay = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan SocketHeartbeatInterval = TimeSpan.FromSeconds(5);
         private DateTime _nextReconnectAtUtc = DateTime.MinValue;
+        private DateTime _nextHeartbeatAtUtc = DateTime.MinValue;
         private int _reconnectCount;
         private long _droppedEventsTotal;
         private string _connectionState = "socket disconnected";
         private bool _hasConnectedOnce;
+        private Button _connectionStatusButton;
 
         private void AddHiddenButton(Panel panel, Color btnColor)
         {
@@ -53,6 +56,19 @@ namespace cAlgo
             _exportButton.Click += ExportEvent;
             panel.AddChild(_exportButton);
 
+            _connectionStatusButton = new Button()
+            {
+                Text = "",
+                Padding = 0,
+                Height = 12,
+                Width = 12,
+                Margin = 2,
+                BackgroundColor = btnColor,
+                Style = Styles.CreateButtonStyle()
+            };
+            panel.AddChild(_connectionStatusButton);
+            UpdateConnectionStatusIndicator();
+
             Button reconnectButton = new()
             {
                 Text = "Reconnect",
@@ -64,6 +80,22 @@ namespace cAlgo
             };
             reconnectButton.Click += ReconnectEvent;
             panel.AddChild(reconnectButton);
+        }
+
+        private Color GetConnectionStatusColor()
+        {
+            return _connectionState == "socket connected"
+                ? Color.FromHex("#2ECC71")
+                : Color.FromHex("#E74C3C");
+        }
+
+        private void UpdateConnectionStatusIndicator()
+        {
+            if (_connectionStatusButton == null)
+                return;
+
+            _connectionStatusButton.Text = "";
+            _connectionStatusButton.BackgroundColor = GetConnectionStatusColor();
         }
 
         private void HiddenEvent(ButtonClickEventArgs obj)
@@ -90,6 +122,18 @@ namespace cAlgo
 
             _connectionState = nextState;
             Print(nextState);
+            UpdateConnectionStatusIndicator();
+        }
+
+        private void ResetHeartbeatDeadline()
+        {
+            _nextHeartbeatAtUtc = DateTime.UtcNow.Add(SocketHeartbeatInterval);
+        }
+
+        private void HandleSocketDisconnect()
+        {
+            CloseSocketConnection();
+            SetConnectionState("socket disconnected");
         }
 
         private bool SendConnectionHello(int reconnectCount)
@@ -117,8 +161,38 @@ namespace cAlgo
             }
             catch (Exception)
             {
-                CloseSocketConnection();
-                SetConnectionState("socket disconnected");
+                HandleSocketDisconnect();
+                return false;
+            }
+        }
+
+        private bool SendConnectionHeartbeat()
+        {
+            if (_networkStream == null)
+                return false;
+
+            try
+            {
+                var heartbeat = new Dictionary<string, object>
+                {
+                    ["kind"] = "connection_heartbeat",
+                    ["source"] = EventSource,
+                    ["source_instance"] = SourceInstanceName,
+                    ["instrument"] = Symbol.Name,
+                    ["timestamp"] = DateTime.UtcNow.ToString("o"),
+                    ["reconnect_count"] = _reconnectCount,
+                    ["dropped_events_total"] = _droppedEventsTotal
+                };
+
+                string jsonString = JsonSerializer.Serialize(heartbeat) + "\n";
+                byte[] data = Encoding.UTF8.GetBytes(jsonString);
+                _networkStream.Write(data, 0, data.Length);
+                ResetHeartbeatDeadline();
+                return true;
+            }
+            catch (Exception)
+            {
+                HandleSocketDisconnect();
                 return false;
             }
         }
@@ -146,12 +220,13 @@ namespace cAlgo
 
                 _reconnectCount = helloReconnectCount;
                 _hasConnectedOnce = true;
+                ResetHeartbeatDeadline();
                 SetConnectionState("socket connected");
                 return true;
             }
             catch (Exception)
             {
-                CloseSocketConnection();
+                HandleSocketDisconnect();
                 return false;
             }
         }
@@ -159,8 +234,18 @@ namespace cAlgo
         private void HandleSocketWriteFailure()
         {
             _droppedEventsTotal++;
-            CloseSocketConnection();
-            SetConnectionState("socket disconnected");
+            HandleSocketDisconnect();
+        }
+
+        private void RunSocketHeartbeat()
+        {
+            if (!EnsureSocketConnected())
+                return;
+
+            if (DateTime.UtcNow < _nextHeartbeatAtUtc)
+                return;
+
+            SendConnectionHeartbeat();
         }
 
         private void ConnectSocket()
@@ -208,6 +293,7 @@ namespace cAlgo
         protected override void Initialize()
         {
             ConnectSocket();
+            Timer.Start(TimeSpan.FromSeconds(1));
 
             // ========== Predefined Config ==========
             if (RowConfig_Input == RowConfig_Data.ATR && (Chart.TimeFrame >= TimeFrame.Minute && Chart.TimeFrame <= TimeFrame.Day3))
@@ -366,6 +452,7 @@ namespace cAlgo
             StackPanel stackPanel = new() {
                 VerticalAlignment = vAlign,
                 HorizontalAlignment = hAlign,
+                Orientation = Orientation.Horizontal,
             };
             AddHiddenButton(stackPanel, Color.FromHex("#7F808080"));
             AddExportButton(stackPanel, Color.FromHex("#7F808080"));

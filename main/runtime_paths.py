@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 _RUNTIME_ROOT_ENV = "QT_RUNTIME_ROOT"
+_LOGS_ROOT_ENV = "QT_LOGS_ROOT"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 STATUS_FILE_NAME = "status.json"
 SOCKET_EVENTS_FILE_NAME = "socket_events.jsonl"
@@ -113,20 +114,31 @@ def runtime_root() -> Path:
     return root
 
 
+def logs_root() -> Path:
+    override = os.environ.get(_LOGS_ROOT_ENV)
+    if override:
+        root = Path(override)
+    else:
+        runtime_override = os.environ.get(_RUNTIME_ROOT_ENV)
+        root = Path(runtime_override).parent / "logs" if runtime_override else _REPO_ROOT / "logs"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def status_file() -> Path:
     return runtime_root() / STATUS_FILE_NAME
 
 
 def socket_events_file() -> Path:
-    return runtime_root() / SOCKET_EVENTS_FILE_NAME
+    return logs_root() / SOCKET_EVENTS_FILE_NAME
 
 
 def quarantine_events_file() -> Path:
-    return runtime_root() / QUARANTINE_EVENTS_FILE_NAME
+    return logs_root() / QUARANTINE_EVENTS_FILE_NAME
 
 
 def trade_history_file() -> Path:
-    return runtime_root() / TRADE_HISTORY_FILE_NAME
+    return logs_root() / TRADE_HISTORY_FILE_NAME
 
 
 def model_file() -> Path:
@@ -141,14 +153,14 @@ def event_history_file(event_name: str) -> Path:
     normalized_name = _normalize_event_name(event_name)
     file_name = EVENT_HISTORY_FILE_NAMES.get(normalized_name)
     if file_name is not None:
-        return runtime_root() / file_name
+        return logs_root() / file_name
 
     safe_name = "".join(
         character.lower()
         for character in normalized_name
         if character.isalnum() or character in {"_", "-"}
     )
-    return runtime_root() / f"history_{safe_name}.csv"
+    return logs_root() / f"history_{safe_name}.csv"
 
 
 def alert_history_file(alias: str) -> Path:
@@ -156,7 +168,7 @@ def alert_history_file(alias: str) -> Path:
         character if character.isalnum() or character in {".", "-"} else "_"
         for character in alias
     )
-    return runtime_root() / f"history_alert_{safe_alias}.csv"
+    return logs_root() / f"history_alert_{safe_alias}.csv"
 
 
 def _normalize_event_name(event_name: str) -> str:

@@ -37,6 +37,7 @@ def make_connection_hello():
         source: str,
         source_instance: str,
         instrument: str,
+        timestamp: str = "2026-03-22T00:00:00Z",
         reconnect_count: int = 0,
         dropped_events_total: int = 0,
     ) -> dict:
@@ -45,7 +46,30 @@ def make_connection_hello():
             "source": source,
             "source_instance": source_instance,
             "instrument": instrument,
-            "timestamp": "2026-03-22T00:00:00Z",
+            "timestamp": timestamp,
+            "reconnect_count": reconnect_count,
+            "dropped_events_total": dropped_events_total,
+        }
+
+    return factory
+
+
+@pytest.fixture
+def make_connection_heartbeat():
+    def factory(
+        source: str,
+        source_instance: str,
+        instrument: str,
+        timestamp: str = "2026-03-22T00:00:05Z",
+        reconnect_count: int = 0,
+        dropped_events_total: int = 0,
+    ) -> dict:
+        return {
+            "kind": "connection_heartbeat",
+            "source": source,
+            "source_instance": source_instance,
+            "instrument": instrument,
+            "timestamp": timestamp,
             "reconnect_count": reconnect_count,
             "dropped_events_total": dropped_events_total,
         }

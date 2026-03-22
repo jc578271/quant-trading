@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -44,6 +45,7 @@ class SocketServer:
         self.server = None
         self.connected_clients: dict[tuple[str, str], dict[str, Any]] = {}
         self.writer_identities: dict[asyncio.StreamWriter, tuple[str, str]] = {}
+        self.active_writers: set[asyncio.StreamWriter] = set()
 
     def _ingest_status_fields(self) -> dict[str, Any]:
         connected_sources = sorted(
@@ -103,6 +105,10 @@ class SocketServer:
         return isinstance(record, dict) and record.get("kind") == "connection_hello"
 
     @staticmethod
+    def _is_connection_heartbeat(record: dict[str, Any]) -> bool:
+        return isinstance(record, dict) and record.get("kind") == "connection_heartbeat"
+
+    @staticmethod
     def _identity_key(record: dict[str, Any]) -> tuple[str, str]:
         return (
             str(record.get("source", "unknown")),
@@ -116,34 +122,62 @@ class SocketServer:
         except (TypeError, ValueError):
             return 0
 
-    def _publish_connected(self, hello: dict[str, Any], timestamp: str, writer: asyncio.StreamWriter) -> None:
-        if self.status is None:
-            return
-
-        source, source_instance = self._identity_key(hello)
+    def _upsert_identity(
+        self,
+        record: dict[str, Any],
+        timestamp: str,
+        writer: asyncio.StreamWriter,
+    ) -> dict[str, Any]:
+        source, source_instance = self._identity_key(record)
+        identity_key = (source, source_instance)
+        existing_identity = self.connected_clients.get(identity_key, {})
         identity = {
             "source": source,
             "source_instance": source_instance,
-            "instrument": hello.get("instrument") or "unknown-instrument",
-            "reconnect_count": self._counter_value(hello, "reconnect_count"),
-            "dropped_events_total": self._counter_value(hello, "dropped_events_total"),
+            "instrument": record.get("instrument")
+            or existing_identity.get("instrument")
+            or "unknown-instrument",
+            "reconnect_count": self._counter_value(record, "reconnect_count")
+            if "reconnect_count" in record
+            else existing_identity.get("reconnect_count", 0),
+            "dropped_events_total": self._counter_value(record, "dropped_events_total")
+            if "dropped_events_total" in record
+            else existing_identity.get("dropped_events_total", 0),
             "last_seen_at": timestamp,
         }
-        identity_key = (source, source_instance)
         self.connected_clients[identity_key] = identity
         self.writer_identities[writer] = identity_key
+        return identity
+
+    def _publish_identity_state(self, identity: dict[str, Any], timestamp: str) -> None:
+        if self.status is None:
+            return
+
         self.status.update_stage(
             "ingest",
             state="up",
-            reason=f"connected: {source}/{source_instance}",
+            reason=f"connected: {identity['source']}/{identity['source_instance']}",
             updated_at=timestamp,
             **self._ingest_status_fields(),
-            source=source,
-            source_instance=source_instance,
+            source=identity["source"],
+            source_instance=identity["source_instance"],
             instrument=identity["instrument"],
             reconnect_count=identity["reconnect_count"],
         )
         self.status.publish(now=timestamp)
+
+    def _publish_connected(self, hello: dict[str, Any], timestamp: str, writer: asyncio.StreamWriter) -> None:
+        identity = self._upsert_identity(hello, timestamp, writer)
+        self._publish_identity_state(identity, timestamp)
+
+    def _publish_heartbeat(
+        self,
+        heartbeat: dict[str, Any],
+        timestamp: str,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        identity = self._upsert_identity(heartbeat, timestamp, writer)
+        self._publish_identity_state(identity, timestamp)
 
     def _publish_disconnect(self, writer: asyncio.StreamWriter, timestamp: str) -> None:
         if self.status is None:
@@ -191,6 +225,7 @@ class SocketServer:
         addr = writer.get_extra_info("peername")
         client_label = None
         live_socket_logged = False
+        self.active_writers.add(writer)
         logging.info("Connection opened from %s, awaiting client identity", addr)
 
         while True:
@@ -210,6 +245,11 @@ class SocketServer:
                         received_at = str(record.get("timestamp") or utc_timestamp())
                         self._publish_connected(record, received_at, writer)
                         logging.info("Client %s identified as %s", addr, client_label)
+                        continue
+                    if self._is_connection_heartbeat(record):
+                        client_label = client_label or self._format_client_label(record)
+                        received_at = str(record.get("timestamp") or utc_timestamp())
+                        self._publish_heartbeat(record, received_at, writer)
                         continue
 
                     received_at = utc_timestamp()
@@ -249,8 +289,10 @@ class SocketServer:
         disconnect_label = client_label or f"unidentified client {addr}"
         logging.info("Client %s disconnected.", disconnect_label)
         self._publish_disconnect(writer, utc_timestamp())
+        self.active_writers.discard(writer)
         writer.close()
-        await writer.wait_closed()
+        with contextlib.suppress(ConnectionError, RuntimeError):
+            await writer.wait_closed()
 
     async def start(self) -> None:
         self.server = await asyncio.start_server(self.handle_client, self.host, self.port)
@@ -261,7 +303,16 @@ class SocketServer:
             await self.server.serve_forever()
 
     async def stop(self) -> None:
-        if self.server is None:
-            return
-        self.server.close()
-        await self.server.wait_closed()
+        server = self.server
+        if server is not None:
+            server.close()
+
+        writers = list(self.active_writers)
+        for writer in writers:
+            writer.close()
+        for writer in writers:
+            with contextlib.suppress(asyncio.TimeoutError, ConnectionError, RuntimeError):
+                await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+        if server is not None:
+            await server.wait_closed()
+            self.server = None

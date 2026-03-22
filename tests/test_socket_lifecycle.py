@@ -162,6 +162,139 @@ def test_disconnect_and_reconnect_preserve_cumulative_drop_counters(
     asyncio.run(exercise())
 
 
+def test_connection_hello_accepts_dotnet_timestamp_precision(runtime_root, make_connection_hello):
+    async def exercise() -> None:
+        status = PipelineStatus(
+            session_started_at="2026-03-22T00:00:00Z",
+            runtime_root=runtime_root,
+        )
+        socket_server = SocketServer(
+            host="127.0.0.1",
+            port=0,
+            callback=lambda record: None,
+            status=status,
+            runtime_root=runtime_root,
+        )
+
+        server, port = await _run_server_once(socket_server)
+        try:
+            _, writer = await _send_records(
+                port,
+                [
+                    make_connection_hello(
+                        "bookmap",
+                        "bm-primary",
+                        "ES",
+                        timestamp="2026-03-22T18:23:19.0350000+00:00",
+                    )
+                ],
+                close=False,
+            )
+            ingest = await _wait_for_stage(
+                runtime_root,
+                "ingest",
+                lambda stage: stage["reason"] == "connected: bookmap/bm-primary",
+            )
+            assert ingest["state"] == "up"
+            assert ingest["updated_at"] == "2026-03-22T18:23:19.0350000+00:00"
+            writer.close()
+            await asyncio.wait_for(writer.wait_closed(), timeout=5)
+            await _wait_for_disconnect(socket_server)
+        finally:
+            server.close()
+            await asyncio.sleep(0)
+
+    asyncio.run(exercise())
+
+
+def test_connection_heartbeat_refreshes_ingest_timestamp(
+    runtime_root,
+    make_connection_hello,
+    make_connection_heartbeat,
+):
+    async def exercise() -> None:
+        status = PipelineStatus(
+            session_started_at="2026-03-22T00:00:00Z",
+            runtime_root=runtime_root,
+        )
+        socket_server = SocketServer(
+            host="127.0.0.1",
+            port=0,
+            callback=lambda record: None,
+            status=status,
+            runtime_root=runtime_root,
+        )
+
+        server, port = await _run_server_once(socket_server)
+        try:
+            _, writer = await _send_records(
+                port,
+                [
+                    make_connection_hello("bookmap", "bm-primary", "ES"),
+                    make_connection_heartbeat(
+                        "bookmap",
+                        "bm-primary",
+                        "ES",
+                        timestamp="2026-03-22T00:00:05Z",
+                    ),
+                ],
+                close=False,
+            )
+            ingest = await _wait_for_stage(
+                runtime_root,
+                "ingest",
+                lambda stage: stage["updated_at"] == "2026-03-22T00:00:05Z",
+            )
+            assert ingest["state"] == "up"
+            assert ingest["reason"] == "connected: bookmap/bm-primary"
+            writer.close()
+            await asyncio.wait_for(writer.wait_closed(), timeout=5)
+            await _wait_for_disconnect(socket_server)
+        finally:
+            server.close()
+            await asyncio.sleep(0)
+
+    asyncio.run(exercise())
+
+
+def test_stop_closes_connected_clients(runtime_root, make_connection_hello):
+    async def exercise() -> None:
+        status = PipelineStatus(
+            session_started_at="2026-03-22T00:00:00Z",
+            runtime_root=runtime_root,
+        )
+        socket_server = SocketServer(
+            host="127.0.0.1",
+            port=0,
+            callback=lambda record: None,
+            status=status,
+            runtime_root=runtime_root,
+        )
+
+        server, port = await _run_server_once(socket_server)
+        socket_server.server = server
+        try:
+            reader, writer = await _send_records(
+                port,
+                [make_connection_hello("bookmap", "bm-primary", "ES")],
+                close=False,
+            )
+            await _wait_for_stage(
+                runtime_root,
+                "ingest",
+                lambda stage: stage["reason"] == "connected: bookmap/bm-primary",
+            )
+            await asyncio.wait_for(socket_server.stop(), timeout=5)
+            assert await asyncio.wait_for(reader.readline(), timeout=5) == b""
+            await _wait_for_disconnect(socket_server)
+            assert not socket_server.active_writers
+        finally:
+            server.close()
+            await asyncio.sleep(0)
+
+    asyncio.run(exercise())
+
+
 def test_status_publisher_marks_ingest_degraded_then_down_after_10_and_30_seconds(
     runtime_root,
 ):

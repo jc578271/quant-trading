@@ -81,15 +81,20 @@ async def main() -> None:
         status=status,
     )
     heartbeat_task = asyncio.create_task(_heartbeat_loop(status))
+    server_task = asyncio.create_task(server.start())
 
     try:
-        await server.start()
-    except KeyboardInterrupt:
+        await server_task
+    except asyncio.CancelledError:
         logging.info("Shutting down Application...")
     finally:
         heartbeat_task.cancel()
+        if not server_task.done():
+            server_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await heartbeat_task
+        with contextlib.suppress(asyncio.CancelledError):
+            await server_task
         await server.stop()
 
         shutdown_at = isoformat_utc(utc_now())
@@ -111,4 +116,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Application terminated by user.")

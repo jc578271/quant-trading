@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **quant-trading** (423 symbols, 1014 relationships, 28 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **quant-trading** (456 symbols, 1156 relationships, 31 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -77,11 +77,7 @@ Before completing any code modification task, verify:
 
 <!-- gitnexus:end -->
 
-## GitNexus Recovery
+## Bookmap Build Deploy
 
-- This section lives outside the GitNexus managed block so `npx gitnexus analyze` does not overwrite it.
-- If GitNexus MCP tools fail with transport errors, stale-index confusion, or inconsistent repo stats, recover in this exact order:
-  1. `npx gitnexus clean --force`
-  2. `npx gitnexus analyze`
-  3. Retry the GitNexus MCP call (`query`, `context`, `impact`, `detect_changes`, etc.)
-- Prefer this recovery sequence before assuming the GitNexus MCP server is unusable.
+- After building `AlertListener`, copy the built artifact from `bookmap-addons/build/libs/` into `D:\Trading-lite\Bookmap7.4.0_b10`.
+- After building the 3 cTrader indicators, always copy the generated `.algo` files into `C:\Users\hoang\Documents\cAlgo\Sources\Indicators`.

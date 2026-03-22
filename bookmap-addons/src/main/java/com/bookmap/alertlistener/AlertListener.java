@@ -38,6 +38,7 @@ public class AlertListener implements
     private final Layer1ApiProvider provider;
     private final Map<String, java.util.List<String>> alertLogsMap = new ConcurrentHashMap<>();
     private final Map<String, JTextArea> logAreas = new ConcurrentHashMap<>();
+    private final java.util.List<JButton> socketStatusButtons = Collections.synchronizedList(new ArrayList<>());
     private JLabel countLabel;
     private int alertCount = 0;
     private static final int MAX_LOG_LINES = 500;
@@ -90,6 +91,7 @@ public class AlertListener implements
     private PrintWriter socketWriter;
     private static final String HOST = "127.0.0.1";
     private static final int PORT = 5555;
+    private static final String DEFAULT_CSV_OUTPUT_PATH = "D:\\projects\\quant-trading\\logs";
     private final Object socketLock = new Object();
     private final ScheduledExecutorService socketReconnectExecutor = Executors.newSingleThreadScheduledExecutor();
     private static final long SOCKET_RECONNECT_DELAY_SECONDS = 5L;
@@ -108,7 +110,7 @@ public class AlertListener implements
 
     // Files for persistence
     private final File configFile;
-    private String csvOutputPath = System.getProperty("user.home");
+    private String csvOutputPath = DEFAULT_CSV_OUTPUT_PATH;
 
     // Per-instrument settings
     private static class InstrumentSettings {
@@ -227,7 +229,7 @@ public class AlertListener implements
         }, 10, 10, TimeUnit.MILLISECONDS);
 
         socketReconnectExecutor.scheduleWithFixedDelay(
-                this::ensureSocketConnected,
+                this::maintainSocketConnection,
                 0,
                 SOCKET_RECONNECT_DELAY_SECONDS,
                 TimeUnit.SECONDS);
@@ -236,6 +238,16 @@ public class AlertListener implements
 
     private long getCurrentTimeMs() {
         return provider.getCurrentTime() / 1_000_000L;
+    }
+
+    private void maintainSocketConnection() {
+        synchronized (socketLock) {
+            if (socket != null && socketWriter != null && !socket.isClosed()) {
+                sendConnectionHeartbeat();
+                return;
+            }
+        }
+        ensureSocketConnected();
     }
 
     private void ensureSocketConnected() {
@@ -260,9 +272,17 @@ public class AlertListener implements
                 hasConnectedOnce = true;
                 logSocketStateTransition("socket connected");
             } catch (IOException ignored) {
-                closeSocketSilently();
+                markSocketDisconnected();
             }
         }
+    }
+
+    private void reconnectSocket() {
+        synchronized (socketLock) {
+            closeSocketSilently();
+        }
+        logSocketStateTransition("socket disconnected");
+        ensureSocketConnected();
     }
 
     private void closeSocketSilently() {
@@ -284,20 +304,49 @@ public class AlertListener implements
         socket = null;
     }
 
+    private void markSocketDisconnected() {
+        closeSocketSilently();
+        logSocketStateTransition("socket disconnected");
+    }
+
+    private Color socketStatusColor() {
+        return "socket connected".equals(socketConnectionState)
+                ? new Color(0, 170, 90)
+                : new Color(200, 60, 60);
+    }
+
+    private void updateSocketStatusButtons() {
+        Color color = socketStatusColor();
+        String tooltip = "Python socket: " + socketConnectionState;
+        synchronized (socketStatusButtons) {
+            for (JButton button : socketStatusButtons) {
+                SwingUtilities.invokeLater(() -> {
+                    button.setText("");
+                    button.setBackground(color);
+                    button.setForeground(Color.WHITE);
+                    button.setOpaque(true);
+                    button.setBorderPainted(false);
+                    button.setFocusPainted(false);
+                    button.setToolTipText(tooltip);
+                });
+            }
+        }
+    }
+
     private void logSocketStateTransition(String nextState) {
         if (Objects.equals(socketConnectionState, nextState)) {
             return;
         }
 
         socketConnectionState = nextState;
+        updateSocketStatusButtons();
         System.out.println(nextState);
         logToUI(null, "SYSTEM: " + nextState);
     }
 
     private void recordDroppedEvent() {
         droppedEventsTotal++;
-        closeSocketSilently();
-        logSocketStateTransition("socket disconnected");
+        markSocketDisconnected();
     }
 
     private String logToUI(String alias, String message) {
@@ -317,7 +366,7 @@ public class AlertListener implements
     private File getCsvOutputDirectory() {
         String configuredPath = csvOutputPath == null ? "" : csvOutputPath.trim();
         File directory = configuredPath.isEmpty()
-                ? new File(System.getProperty("user.home"))
+                ? new File(DEFAULT_CSV_OUTPUT_PATH)
                 : new File(configuredPath);
 
         if (!directory.exists()) {
@@ -442,7 +491,29 @@ public class AlertListener implements
 
         socketWriter.println(toJson(hello));
         if (socketWriter.checkError()) {
-            logSocketStateTransition("socket disconnected");
+            markSocketDisconnected();
+            return false;
+        }
+        return true;
+    }
+
+    private boolean sendConnectionHeartbeat() {
+        if (socketWriter == null) {
+            return false;
+        }
+
+        Map<String, Object> heartbeat = new LinkedHashMap<>();
+        heartbeat.put("kind", "connection_heartbeat");
+        heartbeat.put("source", EVENT_SOURCE);
+        heartbeat.put("source_instance", EVENT_SOURCE_INSTANCE);
+        heartbeat.put("instrument", "bookmap");
+        heartbeat.put("timestamp", currentTimestamp());
+        heartbeat.put("reconnect_count", reconnectCount);
+        heartbeat.put("dropped_events_total", droppedEventsTotal);
+
+        socketWriter.println(toJson(heartbeat));
+        if (socketWriter.checkError()) {
+            markSocketDisconnected();
             return false;
         }
         return true;
@@ -1049,10 +1120,22 @@ public class AlertListener implements
         gbc.weightx = 1.0;
         topPanel.add(countLabel, gbc);
 
+        JButton socketStatusBtn = new JButton("");
+        socketStatusBtn.setMargin(new Insets(0, 0, 0, 0));
+        socketStatusBtn.setPreferredSize(new Dimension(12, 12));
+        socketStatusBtn.setMinimumSize(new Dimension(12, 12));
+        socketStatusBtn.setMaximumSize(new Dimension(12, 12));
+        socketStatusButtons.add(socketStatusBtn);
+        updateSocketStatusButtons();
+        gbc.gridx = 1;
+        gbc.gridy = 0;
+        gbc.weightx = 0;
+        topPanel.add(socketStatusBtn, gbc);
+
         JButton reconnectBtn = new JButton("Reconnect");
         reconnectBtn.setMargin(new Insets(2, 5, 2, 5));
         reconnectBtn.addActionListener(e -> reconnectSocket());
-        gbc.gridx = 1;
+        gbc.gridx = 2;
         gbc.gridy = 0;
         gbc.weightx = 0;
         topPanel.add(reconnectBtn, gbc);
@@ -1062,7 +1145,7 @@ public class AlertListener implements
         filterTitle.setFont(new Font("Arial", Font.BOLD, 12));
         gbc.gridx = 0;
         gbc.gridy = 1;
-        gbc.gridwidth = 2;
+        gbc.gridwidth = 3;
         gbc.insets = new Insets(10, 2, 2, 2);
         topPanel.add(filterTitle, gbc);
 
@@ -1138,7 +1221,7 @@ public class AlertListener implements
 
         gbc.gridx = 0;
         gbc.gridy = 2;
-        gbc.gridwidth = 2;
+        gbc.gridwidth = 3;
         gbc.insets = new Insets(5, 2, 5, 2);
         topPanel.add(filterArea, gbc);
 
@@ -1256,7 +1339,7 @@ public class AlertListener implements
                     settingsMap.put(alias, s);
                 }
 
-                csvOutputPath = prop.getProperty("global.csvOutputPath", System.getProperty("user.home"));
+                csvOutputPath = prop.getProperty("global.csvOutputPath", DEFAULT_CSV_OUTPUT_PATH);
 
                 System.out.println("Config loaded for " + settingsMap.size() + " instruments.");
             } catch (IOException | NumberFormatException ex) {

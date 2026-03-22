@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 from main import _initialize_status
-from pipeline_status import PipelineStatus
+from pipeline_status import PipelineStatus, parse_timestamp
 from tests.conftest import read_status_json
 
 
@@ -68,6 +69,18 @@ def test_stage_state_transitions_use_only_up_degraded_down(runtime_root):
         degraded["stages"]["ingest"]["state"],
         down["stages"]["ingest"]["state"],
     } <= {"up", "degraded", "down"}
+
+
+def test_parse_timestamp_accepts_dotnet_seven_digit_fractional_seconds():
+    parsed = parse_timestamp("2026-03-22T18:23:28.5598427+00:00")
+
+    assert parsed == datetime(2026, 3, 22, 18, 23, 28, 559842, tzinfo=timezone.utc)
+
+
+def test_parse_timestamp_accepts_epoch_with_dotnet_fractional_precision():
+    parsed = parse_timestamp("1970-01-01T00:00:00.0000000+00:00")
+
+    assert parsed == datetime(1970, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 
 
 def test_execution_stage_is_degraded_when_mt5_disconnects_but_simulator_available(runtime_root):

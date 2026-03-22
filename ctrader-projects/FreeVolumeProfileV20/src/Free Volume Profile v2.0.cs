@@ -83,7 +83,7 @@ namespace cAlgo
         private Button _exportButton;
         private TcpClient _tcpClient;
         private bool _isManualCsvExportInProgress;
-        private const string DefaultCsvOutputFolder = @"D:\projects\quant-trading";
+        private const string DefaultCsvOutputFolder = @"D:\projects\quant-trading\logs";
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
         private static readonly string[] ExportCsvHeaders =
         {

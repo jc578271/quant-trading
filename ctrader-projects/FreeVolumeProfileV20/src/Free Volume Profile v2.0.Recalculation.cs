@@ -221,6 +221,8 @@ namespace cAlgo
 
         protected override void OnTimer()
         {
+            RunSocketHeartbeat();
+
             if (timerHandler.isAsyncLoading)
             {
                 if (!SourceObjs.startAsyncLoading)
@@ -281,7 +283,7 @@ namespace cAlgo
                 else {
                     ClearAndRecalculate();
                     timerHandler.isAsyncLoading = false;
-                    Timer.Stop();
+                    Timer.Start(TimeSpan.FromSeconds(1));
                 }
             }
 

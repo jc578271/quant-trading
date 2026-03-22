@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,9 @@ ALLOWED_STATES = {"up", "degraded", "down"}
 HEARTBEAT_SECONDS = 5
 DEGRADED_AFTER_SECONDS = 10
 DOWN_AFTER_SECONDS = 30
+ISO_FRACTIONAL_SECONDS_RE = re.compile(
+    r"^(?P<prefix>.+T\d{2}:\d{2}:\d{2}\.)(?P<fraction>\d+)(?P<suffix>Z|[+-]\d{2}:\d{2})$"
+)
 DEFAULT_STAGE_FIELDS = {
     "ingest": {
         "connected_sources": [],
@@ -48,7 +52,13 @@ def isoformat_utc(value: datetime) -> str:
 
 
 def parse_timestamp(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    candidate = value.strip()
+    match = ISO_FRACTIONAL_SECONDS_RE.match(candidate)
+    if match and len(match.group("fraction")) > 6:
+        candidate = (
+            f"{match.group('prefix')}{match.group('fraction')[:6]}{match.group('suffix')}"
+        )
+    return datetime.fromisoformat(candidate.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
 class PipelineStatus:
