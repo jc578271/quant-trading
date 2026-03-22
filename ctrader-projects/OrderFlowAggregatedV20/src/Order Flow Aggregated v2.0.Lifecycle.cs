@@ -641,7 +641,8 @@ namespace cAlgo
             string outputFolder = string.IsNullOrWhiteSpace(CsvOutputFolder) ? DefaultCsvOutputFolder : CsvOutputFolder.Trim();
             Directory.CreateDirectory(outputFolder);
 
-            string filePath = Path.Combine(outputFolder, "history_orderflowaggregated.csv");
+            string symbol = ResolveExportSymbol(exportData, sourceMeta: null);
+            string filePath = Path.Combine(outputFolder, $"history_orderflowaggregated_{symbol}.csv");
             bool writeHeader = !File.Exists(filePath) || new FileInfo(filePath).Length == 0;
 
             using (StreamWriter writer = new StreamWriter(filePath, true, Utf8NoBom))
@@ -818,6 +819,33 @@ namespace cAlgo
                 return value;
 
             return null;
+        }
+
+        private string ResolveExportSymbol(
+            Dictionary<string, object> exportData,
+            Dictionary<string, object> sourceMeta)
+        {
+            object symbolValue = sourceMeta != null
+                ? ResolveSourceMetaValue(exportData, sourceMeta, "symbol")
+                : ResolveExportValue(exportData, "symbol");
+            string rawSymbol = Convert.ToString(symbolValue, CultureInfo.InvariantCulture) ?? Symbol.Name;
+            return SanitizeFileToken(rawSymbol);
+        }
+
+        private string SanitizeFileToken(string rawValue)
+        {
+            if (string.IsNullOrWhiteSpace(rawValue))
+                return "unknown";
+
+            StringBuilder builder = new StringBuilder(rawValue.Length);
+            foreach (char character in rawValue)
+            {
+                builder.Append(char.IsLetterOrDigit(character) || character == '.' || character == '-'
+                    ? character
+                    : '_');
+            }
+
+            return builder.ToString();
         }
 
         private string EscapeCsvValue(string value)

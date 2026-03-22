@@ -168,7 +168,7 @@ def alert_history_file(alias: str) -> Path:
         character if character.isalnum() or character in {".", "-"} else "_"
         for character in alias
     )
-    return logs_root() / f"history_alert_{safe_alias}.csv"
+    return logs_root() / f"history_alertlistener_{safe_alias}.csv"
 
 
 def _normalize_event_name(event_name: str) -> str:

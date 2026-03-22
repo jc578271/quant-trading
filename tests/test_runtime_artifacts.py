@@ -48,7 +48,7 @@ def test_event_history_file_names_are_exact():
     assert event_history_file("orderflow").name == ORDER_FLOW_HISTORY_FILE_NAME
     assert event_history_file("volumeprofile").name == VOLUME_PROFILE_HISTORY_FILE_NAME
     assert event_history_file("wyckoff_state").name == WYCKOFF_STATE_HISTORY_FILE_NAME
-    assert alert_history_file("GCJ6.COMEX_RITHMIC").name == "history_alert_GCJ6.COMEX_RITHMIC.csv"
+    assert alert_history_file("GCJ6.COMEX_RITHMIC").name == "history_alertlistener_GCJ6.COMEX_RITHMIC.csv"
 
 
 def test_order_simulator_defaults_to_runtime_trade_history():

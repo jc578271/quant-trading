@@ -355,12 +355,21 @@ public class AlertListener implements
 
     private String logCsvRow(String alias, CsvLogRow row) {
         String csvLine = toCsvLine(row);
+        appendLogToFile(alias, csvLine);
         updateUI(alias, csvLine);
         return csvLine;
     }
 
     private void appendLogToFile(String alias, String csvLine) {
-        // Phase 2 runtime artifacts are owned by the Python bridge.
+        if (alias == null || alias.trim().isEmpty()) {
+            return;
+        }
+
+        try {
+            appendCsvLine(getCsvOutputFile(alias), csvLine);
+        } catch (IOException e) {
+            System.err.println("Error writing CSV log for " + alias + ": " + e.getMessage());
+        }
     }
 
     private File getCsvOutputDirectory() {
@@ -376,13 +385,18 @@ public class AlertListener implements
         return directory;
     }
 
+    private File getCsvOutputFile(String alias) {
+        return new File(getCsvOutputDirectory(), "history_alertlistener_" + sanitize(alias) + ".csv");
+    }
+
     private int migrateCsvOutputFiles(File sourceDirectory, File targetDirectory) {
         if (sourceDirectory == null || targetDirectory == null || sourceDirectory.equals(targetDirectory) || !sourceDirectory.exists()) {
             return 0;
         }
 
         File[] filesToMove = sourceDirectory.listFiles((dir, name) ->
-                name.startsWith("AlertListener_") && (name.endsWith(".csv") || name.endsWith(".log")));
+                (name.startsWith("AlertListener_") || name.startsWith("history_alertlistener_"))
+                        && (name.endsWith(".csv") || name.endsWith(".log")));
         if (filesToMove == null || filesToMove.length == 0) {
             return 0;
         }

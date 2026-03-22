@@ -32,7 +32,7 @@ def test_indicator_events_do_not_create_raw_history_csv(runtime_root, fake_mt5_c
     assert not (logs_root() / ORDER_FLOW_HISTORY_FILE_NAME).exists()
 
 
-def test_alert_events_still_create_alert_csv(runtime_root, fake_mt5_client, monkeypatch):
+def test_alert_events_do_not_create_python_alert_csv(runtime_root, fake_mt5_client, monkeypatch):
     monkeypatch.setattr(AIAnalyzer, "_load_or_train_initial_model", lambda self: None)
     analyzer = AIAnalyzer(fake_mt5_client)
 
@@ -50,4 +50,4 @@ def test_alert_events_still_create_alert_csv(runtime_root, fake_mt5_client, monk
         }
     )
 
-    assert alert_history_file("XAUUSD").exists()
+    assert not alert_history_file("XAUUSD").exists()
