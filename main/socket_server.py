@@ -1,124 +1,267 @@
+from __future__ import annotations
+
 import asyncio
-from datetime import datetime, timezone
 import json
 import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 from event_contract import normalize_record
+from pipeline_status import PipelineStatus
+from runtime_paths import quarantine_events_file, socket_events_file
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-QUARANTINE_FILE = "quarantine_events.jsonl"
-SOCKET_EVENTS_FILE = "socket_events.jsonl"
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def quarantine_record(received_at, reason, raw):
-    quarantine_event = {
-        "received_at": received_at,
-        "reason": reason,
-        "raw": raw,
-    }
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _append_jsonl(path: Path, record: dict[str, Any], error_message: str) -> None:
     try:
-        with open(QUARANTINE_FILE, "a", encoding="utf-8") as quarantine_file:
-            quarantine_file.write(json.dumps(quarantine_event, ensure_ascii=True) + "\n")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as output_file:
+            output_file.write(json.dumps(record, ensure_ascii=True) + "\n")
     except OSError as error:
-        logging.error(f"Failed to quarantine event: {error}")
+        logging.error("%s: %s", error_message, error)
 
-
-def append_socket_event(received_at, client_label, raw, normalized):
-    socket_event = {
-        "received_at": received_at,
-        "client": client_label,
-        "raw": raw,
-        "normalized": normalized,
-    }
-    try:
-        with open(SOCKET_EVENTS_FILE, "a", encoding="utf-8") as socket_events_file:
-            socket_events_file.write(json.dumps(socket_event, ensure_ascii=True) + "\n")
-    except OSError as error:
-        logging.error(f"Failed to write socket event log: {error}")
 
 class SocketServer:
-    def __init__(self, host='127.0.0.1', port=5555, callback=None):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 5555,
+        callback=None,
+        status: PipelineStatus | None = None,
+        runtime_root: str | Path | None = None,
+    ) -> None:
         self.host = host
         self.port = port
         self.callback = callback
+        self.status = status
+        self.runtime_root = Path(runtime_root) if runtime_root else None
         self.server = None
+        self.connected_clients: dict[tuple[str, str], dict[str, Any]] = {}
+        self.writer_identities: dict[asyncio.StreamWriter, tuple[str, str]] = {}
+
+    def _ingest_status_fields(self) -> dict[str, Any]:
+        connected_sources = sorted(
+            f"{client['source']}/{client['source_instance']}"
+            for client in self.connected_clients.values()
+        )
+        return {
+            "connected_sources": connected_sources,
+            "reconnects_total": sum(client["reconnect_count"] for client in self.connected_clients.values()),
+            "dropped_events_total": sum(client["dropped_events_total"] for client in self.connected_clients.values()),
+        }
+
+    def _runtime_file(self, default_factory, filename: str) -> Path:
+        if self.runtime_root:
+            self.runtime_root.mkdir(parents=True, exist_ok=True)
+            return self.runtime_root / filename
+        return default_factory()
+
+    def quarantine_record(self, received_at: str, reason: str, raw: dict[str, Any]) -> None:
+        _append_jsonl(
+            self._runtime_file(quarantine_events_file, "quarantine_events.jsonl"),
+            {
+                "received_at": received_at,
+                "reason": reason,
+                "raw": raw,
+            },
+            "Failed to quarantine event",
+        )
+
+    def append_socket_event(
+        self,
+        received_at: str,
+        client_label: str,
+        raw: dict[str, Any],
+        normalized: dict[str, Any],
+    ) -> None:
+        _append_jsonl(
+            self._runtime_file(socket_events_file, "socket_events.jsonl"),
+            {
+                "received_at": received_at,
+                "client": client_label,
+                "raw": raw,
+                "normalized": normalized,
+            },
+            "Failed to write socket event log",
+        )
 
     @staticmethod
-    def _format_client_label(record):
+    def _format_client_label(record: dict[str, Any]) -> str:
         source = record.get("source", "unknown")
         source_instance = record.get("source_instance", "unknown")
         instrument = record.get("instrument") or "unknown-instrument"
         return f"{source}/{source_instance} [{instrument}]"
 
     @staticmethod
-    def _is_connection_hello(record):
+    def _is_connection_hello(record: dict[str, Any]) -> bool:
         return isinstance(record, dict) and record.get("kind") == "connection_hello"
 
-    async def handle_client(self, reader, writer):
-        addr = writer.get_extra_info('peername')
+    @staticmethod
+    def _identity_key(record: dict[str, Any]) -> tuple[str, str]:
+        return (
+            str(record.get("source", "unknown")),
+            str(record.get("source_instance", "unknown")),
+        )
+
+    @staticmethod
+    def _counter_value(record: dict[str, Any], key: str) -> int:
+        try:
+            return int(record.get(key, 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def _publish_connected(self, hello: dict[str, Any], timestamp: str, writer: asyncio.StreamWriter) -> None:
+        if self.status is None:
+            return
+
+        source, source_instance = self._identity_key(hello)
+        identity = {
+            "source": source,
+            "source_instance": source_instance,
+            "instrument": hello.get("instrument") or "unknown-instrument",
+            "reconnect_count": self._counter_value(hello, "reconnect_count"),
+            "dropped_events_total": self._counter_value(hello, "dropped_events_total"),
+            "last_seen_at": timestamp,
+        }
+        identity_key = (source, source_instance)
+        self.connected_clients[identity_key] = identity
+        self.writer_identities[writer] = identity_key
+        self.status.update_stage(
+            "ingest",
+            state="up",
+            reason=f"connected: {source}/{source_instance}",
+            updated_at=timestamp,
+            **self._ingest_status_fields(),
+            source=source,
+            source_instance=source_instance,
+            instrument=identity["instrument"],
+            reconnect_count=identity["reconnect_count"],
+        )
+        self.status.publish(now=timestamp)
+
+    def _publish_disconnect(self, writer: asyncio.StreamWriter, timestamp: str) -> None:
+        if self.status is None:
+            return
+
+        identity_key = self.writer_identities.pop(writer, None)
+        if identity_key is None:
+            return
+
+        disconnected_identity = self.connected_clients.pop(identity_key, None)
+        if disconnected_identity is None:
+            return
+
+        if self.connected_clients:
+            latest_identity = max(
+                self.connected_clients.values(),
+                key=lambda client: client["last_seen_at"],
+            )
+            self.status.update_stage(
+                "ingest",
+                state="up",
+                reason=f"connected: {latest_identity['source']}/{latest_identity['source_instance']}",
+                updated_at=latest_identity["last_seen_at"],
+                **self._ingest_status_fields(),
+                source=latest_identity["source"],
+                source_instance=latest_identity["source_instance"],
+                instrument=latest_identity["instrument"],
+                reconnect_count=latest_identity["reconnect_count"],
+            )
+        else:
+            self.status.update_stage(
+                "ingest",
+                state="up",
+                reason=f"disconnected: {disconnected_identity['source']}/{disconnected_identity['source_instance']}",
+                updated_at=timestamp,
+                **self._ingest_status_fields(),
+                source=disconnected_identity["source"],
+                source_instance=disconnected_identity["source_instance"],
+                instrument=disconnected_identity["instrument"],
+                reconnect_count=disconnected_identity["reconnect_count"],
+            )
+        self.status.publish(now=timestamp)
+
+    async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        addr = writer.get_extra_info("peername")
         client_label = None
         live_socket_logged = False
-        logging.info(f"Connection opened from {addr}, awaiting client identity")
-        
+        logging.info("Connection opened from %s, awaiting client identity", addr)
+
         while True:
             try:
-                # Use readline() because JSONs can be very large (e.g. Order Flow Footprint)
                 line = await reader.readline()
                 if not line:
                     break
-                    
-                message = line.decode('utf-8').strip()
+
+                message = line.decode("utf-8").strip()
                 if not message:
                     continue
-                    
+
                 try:
                     record = json.loads(message)
                     if self._is_connection_hello(record):
                         client_label = self._format_client_label(record)
-                        logging.info(f"Client {addr} identified as {client_label}")
+                        received_at = str(record.get("timestamp") or utc_timestamp())
+                        self._publish_connected(record, received_at, writer)
+                        logging.info("Client %s identified as %s", addr, client_label)
                         continue
 
-                    received_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                    received_at = utc_timestamp()
                     normalized_record, rejection_reason = normalize_record(record, received_at)
                     if rejection_reason:
-                        quarantine_record(received_at, rejection_reason, record)
+                        self.quarantine_record(received_at, rejection_reason, record)
                         rejected_label = client_label or f"unidentified client {addr}"
-                        logging.error(f"Rejected event from {rejected_label}: {rejection_reason}")
+                        logging.error("Rejected event from %s: %s", rejected_label, rejection_reason)
                         continue
                     if client_label is None:
                         client_label = self._format_client_label(normalized_record)
-                        logging.info(f"Client {addr} identified as {client_label}")
+                        logging.info("Client %s identified as %s", addr, client_label)
 
-                    append_socket_event(received_at, client_label, record, normalized_record)
+                    self.append_socket_event(received_at, client_label, record, normalized_record)
 
                     if not live_socket_logged:
-                        source_name = normalized_record.get("source_instance") or normalized_record.get("source") or "unknown"
-                        logging.info(f"LIVE SOCKET ON: {source_name}")
+                        source_name = (
+                            normalized_record.get("source_instance")
+                            or normalized_record.get("source")
+                            or "unknown"
+                        )
+                        logging.info("LIVE SOCKET ON: %s", source_name)
                         live_socket_logged = True
 
                     if self.callback:
                         self.callback(normalized_record)
                 except json.JSONDecodeError:
                     malformed_label = client_label or f"unidentified client {addr}"
-                    logging.error(f"Malformed JSON from {malformed_label}: {message[:100]}...")
-                        
+                    logging.error("Malformed JSON from %s: %s...", malformed_label, message[:100])
             except ConnectionResetError:
                 break
-            except Exception as e:
+            except Exception as error:
                 error_label = client_label or f"unidentified client {addr}"
-                logging.error(f"Socket error from {error_label}: {e}")
+                logging.error("Socket error from %s: %s", error_label, error)
                 break
 
         disconnect_label = client_label or f"unidentified client {addr}"
-        logging.info(f"Client {disconnect_label} disconnected.")
+        logging.info("Client %s disconnected.", disconnect_label)
+        self._publish_disconnect(writer, utc_timestamp())
         writer.close()
         await writer.wait_closed()
 
-    async def start(self):
+    async def start(self) -> None:
         self.server = await asyncio.start_server(self.handle_client, self.host, self.port)
-        addrs = ', '.join(str(sock.getsockname()) for sock in self.server.sockets)
-        logging.info(f"Socket Server listening on {addrs} for cTrader data...")
+        addrs = ", ".join(str(sock.getsockname()) for sock in self.server.sockets)
+        logging.info("Socket Server listening on %s for cTrader data...", addrs)
 
         async with self.server:
             await self.server.serve_forever()
+
+    async def stop(self) -> None:
+        if self.server is None:
+            return
+        self.server.close()
+        await self.server.wait_closed()

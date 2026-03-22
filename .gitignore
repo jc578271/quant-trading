@@ -11,3 +11,4 @@ __pycache__
 .dotnet-home/
 .ctrader-indicators-test/
 .tmp/
+runtime/

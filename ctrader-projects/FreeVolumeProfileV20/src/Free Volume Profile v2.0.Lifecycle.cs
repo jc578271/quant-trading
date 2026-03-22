@@ -17,6 +17,13 @@ namespace cAlgo
 {
     public partial class FreeVolumeProfileV20 : Indicator
     {
+        private static readonly TimeSpan SocketReconnectDelay = TimeSpan.FromSeconds(5);
+        private DateTime _nextReconnectAtUtc = DateTime.MinValue;
+        private int _reconnectCount;
+        private long _droppedEventsTotal;
+        private string _connectionState = "socket disconnected";
+        private bool _hasConnectedOnce;
+
         private void AddHiddenButton(Panel panel, Color btnColor)
         {
             Button button = new()
@@ -67,28 +74,28 @@ namespace cAlgo
                 ParamBorder.IsVisible = true;
         }
 
-        private void ConnectSocket()
+        private void CloseSocketConnection()
         {
-            if (_tcpClient != null && _tcpClient.Connected) return;
+            try { _networkStream?.Close(); } catch {}
+            try { _tcpClient?.Close(); } catch {}
 
-            try {
-                if (_tcpClient != null) {
-                    try { _networkStream?.Close(); } catch {}
-                    try { _tcpClient.Close(); } catch {}
-                }
-                _tcpClient = new TcpClient("127.0.0.1", 5555);
-                _networkStream = _tcpClient.GetStream();
-                SendConnectionHello();
-                Print("Successfully connected to Python Socket (OrderFlow Exporter)");
-            } catch (Exception ex) {
-                Print("Socket Error: " + ex.Message);
-            }
+            _networkStream = null;
+            _tcpClient = null;
         }
 
-        private void SendConnectionHello()
+        private void SetConnectionState(string nextState)
+        {
+            if (_connectionState == nextState)
+                return;
+
+            _connectionState = nextState;
+            Print(nextState);
+        }
+
+        private bool SendConnectionHello(int reconnectCount)
         {
             if (_networkStream == null)
-                return;
+                return false;
 
             try
             {
@@ -98,29 +105,76 @@ namespace cAlgo
                     ["source"] = EventSource,
                     ["source_instance"] = SourceInstanceName,
                     ["instrument"] = Symbol.Name,
-                    ["timestamp"] = DateTime.UtcNow.ToString("o")
+                    ["timestamp"] = DateTime.UtcNow.ToString("o"),
+                    ["reconnect_count"] = reconnectCount,
+                    ["dropped_events_total"] = _droppedEventsTotal
                 };
 
                 string jsonString = JsonSerializer.Serialize(hello) + "\n";
                 byte[] data = Encoding.UTF8.GetBytes(jsonString);
                 _networkStream.Write(data, 0, data.Length);
+                return true;
             }
             catch (Exception)
             {
+                CloseSocketConnection();
+                SetConnectionState("socket disconnected");
+                return false;
             }
+        }
+
+        private bool EnsureSocketConnected(bool force = false)
+        {
+            if (_tcpClient != null && _tcpClient.Connected && _networkStream != null)
+                return true;
+
+            DateTime now = DateTime.UtcNow;
+            if (!force && now < _nextReconnectAtUtc)
+                return false;
+
+            _nextReconnectAtUtc = now.Add(SocketReconnectDelay);
+            SetConnectionState("socket reconnecting");
+
+            try
+            {
+                CloseSocketConnection();
+                _tcpClient = new TcpClient("127.0.0.1", 5555);
+                _networkStream = _tcpClient.GetStream();
+                int helloReconnectCount = _hasConnectedOnce ? _reconnectCount + 1 : _reconnectCount;
+                if (!SendConnectionHello(helloReconnectCount))
+                    return false;
+
+                _reconnectCount = helloReconnectCount;
+                _hasConnectedOnce = true;
+                SetConnectionState("socket connected");
+                return true;
+            }
+            catch (Exception)
+            {
+                CloseSocketConnection();
+                return false;
+            }
+        }
+
+        private void HandleSocketWriteFailure()
+        {
+            _droppedEventsTotal++;
+            CloseSocketConnection();
+            SetConnectionState("socket disconnected");
+        }
+
+        private void ConnectSocket()
+        {
+            EnsureSocketConnected(force: true);
         }
 
         private void ReconnectEvent(ButtonClickEventArgs obj)
         {
             try
             {
-                try { _networkStream?.Close(); } catch {}
-                try { _tcpClient?.Close(); } catch {}
-
-                _networkStream = null;
-                _tcpClient = null;
-
-                ConnectSocket();
+                CloseSocketConnection();
+                _nextReconnectAtUtc = DateTime.MinValue;
+                EnsureSocketConnected(force: true);
             }
             catch (Exception ex)
             {
@@ -405,13 +459,26 @@ namespace cAlgo
 
         public void SendSocketData(int index, string profileType, Dictionary<double, double> volRank, Dictionary<double, double> volUp, Dictionary<double, double> volDown, Dictionary<double, double> deltaRank, double[] minMaxDelta)
         {
+            if (!EnsureSocketConnected())
+            {
+                _droppedEventsTotal++;
+                return;
+            }
+
             try
             {
                 Dictionary<string, object> exportData = BuildExportPayload(index, profileType, volRank, volUp, volDown, deltaRank, minMaxDelta);
 
                 string jsonString = JsonSerializer.Serialize(exportData);
                 byte[] data = Encoding.UTF8.GetBytes(jsonString + "\n");
-                _networkStream?.Write(data, 0, data.Length);
+                try
+                {
+                    _networkStream.Write(data, 0, data.Length);
+                }
+                catch (Exception)
+                {
+                    HandleSocketWriteFailure();
+                }
             }
             catch { }
         }

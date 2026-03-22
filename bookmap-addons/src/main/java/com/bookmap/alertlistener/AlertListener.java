@@ -91,9 +91,15 @@ public class AlertListener implements
     private static final String HOST = "127.0.0.1";
     private static final int PORT = 5555;
     private final Object socketLock = new Object();
+    private final ScheduledExecutorService socketReconnectExecutor = Executors.newSingleThreadScheduledExecutor();
+    private static final long SOCKET_RECONNECT_DELAY_SECONDS = 5L;
     private static final String EVENT_CONTRACT_SCHEMA = "event-contract/v1";
     private static final String EVENT_SOURCE = "bookmap";
     private static final String EVENT_SOURCE_INSTANCE = "AlertListener";
+    private String socketConnectionState = "socket disconnected";
+    private boolean hasConnectedOnce = false;
+    private long reconnectCount = 0L;
+    private long droppedEventsTotal = 0L;
 
     // DOM State Tracking: alias -> OrderBook
     // Note: Bookmap automatically backfills historical data from the chart into
@@ -103,7 +109,6 @@ public class AlertListener implements
     // Files for persistence
     private final File configFile;
     private String csvOutputPath = System.getProperty("user.home");
-    // history files are now per-alias: AlertListener_history_[alias].csv
 
     // Per-instrument settings
     private static class InstrumentSettings {
@@ -221,7 +226,11 @@ public class AlertListener implements
             checkWalls();
         }, 10, 10, TimeUnit.MILLISECONDS);
 
-        reconnectSocket();
+        socketReconnectExecutor.scheduleWithFixedDelay(
+                this::ensureSocketConnected,
+                0,
+                SOCKET_RECONNECT_DELAY_SECONDS,
+                TimeUnit.SECONDS);
         System.out.println("==============================");
     }
 
@@ -229,27 +238,31 @@ public class AlertListener implements
         return provider.getCurrentTime() / 1_000_000L;
     }
 
-    private void reconnectSocket() {
-        new Thread(() -> {
-            synchronized (socketLock) {
-                try {
-                    closeSocketSilently();
-
-                    socket = new Socket(HOST, PORT);
-                    socketWriter = new PrintWriter(socket.getOutputStream(), true);
-                    sendConnectionHello();
-                    String msg = "Successfully connected to Python Socket (ai_analyzer)";
-                    System.out.println(msg);
-                    logToUI(null, "SYSTEM: " + msg);
-                } catch (IOException e) {
-                    String err = "Could not connect to Python Socket: " + e.getMessage();
-                    System.err.println(err);
-                    logToUI(null, "ERROR: " + err);
-                    socketWriter = null;
-                    socket = null;
-                }
+    private void ensureSocketConnected() {
+        synchronized (socketLock) {
+            if (socket != null && socketWriter != null && !socket.isClosed()) {
+                return;
             }
-        }).start();
+
+            logSocketStateTransition("socket reconnecting");
+
+            try {
+                closeSocketSilently();
+                socket = new Socket(HOST, PORT);
+                socketWriter = new PrintWriter(socket.getOutputStream(), true);
+                long helloReconnectCount = hasConnectedOnce ? reconnectCount + 1L : reconnectCount;
+                if (!sendConnectionHello(helloReconnectCount)) {
+                    closeSocketSilently();
+                    return;
+                }
+
+                reconnectCount = helloReconnectCount;
+                hasConnectedOnce = true;
+                logSocketStateTransition("socket connected");
+            } catch (IOException ignored) {
+                closeSocketSilently();
+            }
+        }
     }
 
     private void closeSocketSilently() {
@@ -271,6 +284,22 @@ public class AlertListener implements
         socket = null;
     }
 
+    private void logSocketStateTransition(String nextState) {
+        if (Objects.equals(socketConnectionState, nextState)) {
+            return;
+        }
+
+        socketConnectionState = nextState;
+        System.out.println(nextState);
+        logToUI(null, "SYSTEM: " + nextState);
+    }
+
+    private void recordDroppedEvent() {
+        droppedEventsTotal++;
+        closeSocketSilently();
+        logSocketStateTransition("socket disconnected");
+    }
+
     private String logToUI(String alias, String message) {
         return logCsvRow(alias, createSystemCsvRow(currentTimestamp(), alias, message));
     }
@@ -278,19 +307,11 @@ public class AlertListener implements
     private String logCsvRow(String alias, CsvLogRow row) {
         String csvLine = toCsvLine(row);
         updateUI(alias, csvLine);
-        appendLogToFile(alias, csvLine);
         return csvLine;
     }
 
     private void appendLogToFile(String alias, String csvLine) {
-        String fileName = alias == null ? "AlertListener_history_system.csv"
-                : "AlertListener_history_" + sanitize(alias) + ".csv";
-        File file = new File(getCsvOutputDirectory(), fileName);
-        try {
-            appendCsvLine(file, csvLine);
-        } catch (IOException e) {
-            System.err.println("Error writing to history log (" + fileName + "): " + e.getMessage());
-        }
+        // Phase 2 runtime artifacts are owned by the Python bridge.
     }
 
     private File getCsvOutputDirectory() {
@@ -383,6 +404,7 @@ public class AlertListener implements
             Map<String, Object> sourceMeta) {
         synchronized (socketLock) {
             if (socketWriter == null) {
+                droppedEventsTotal++;
                 return;
             }
 
@@ -399,14 +421,14 @@ public class AlertListener implements
 
             socketWriter.println(toJson(envelope));
             if (socketWriter.checkError()) {
-                closeSocketSilently();
+                recordDroppedEvent();
             }
         }
     }
 
-    private void sendConnectionHello() {
+    private boolean sendConnectionHello(long helloReconnectCount) {
         if (socketWriter == null) {
-            return;
+            return false;
         }
 
         Map<String, Object> hello = new LinkedHashMap<>();
@@ -415,8 +437,15 @@ public class AlertListener implements
         hello.put("source_instance", EVENT_SOURCE_INSTANCE);
         hello.put("instrument", "bookmap");
         hello.put("timestamp", currentTimestamp());
+        hello.put("reconnect_count", helloReconnectCount);
+        hello.put("dropped_events_total", droppedEventsTotal);
 
         socketWriter.println(toJson(hello));
+        if (socketWriter.checkError()) {
+            logSocketStateTransition("socket disconnected");
+            return false;
+        }
+        return true;
     }
 
     private String buildEventId(String event, String instrument, String timestamp) {
@@ -987,10 +1016,6 @@ public class AlertListener implements
     }
 
     private void exportAlert(String time, int count, String symbol, String text, boolean popup) {
-        if (socketWriter == null) {
-            return;
-        }
-
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("symbol", symbol);
         payload.put("text", text);
@@ -1191,15 +1216,6 @@ public class AlertListener implements
             }
             setAreaToHeader(areaForThisTab);
 
-            // Clear disk (delete the file)
-            File csvFile = getCsvHistoryFile(indicatorName);
-            if (csvFile.exists()) {
-                csvFile.delete();
-            }
-            File legacyFile = getLegacyHistoryFile(indicatorName);
-            if (legacyFile.exists()) {
-                legacyFile.delete();
-            }
         });
 
         JButton openFolderButton = new JButton("Open Folder");
@@ -1270,14 +1286,7 @@ public class AlertListener implements
     }
 
     private void loadLogHistory(String alias, JTextArea area) {
-        File csvFile = getCsvHistoryFile(alias);
-        if (csvFile.exists()) {
-            loadLines(csvFile, area);
-            return;
-        }
-
         setAreaToHeader(area);
-        loadLines(getLegacyHistoryFile(alias), area);
     }
 
     private void loadLines(File file, JTextArea area) {
@@ -1300,16 +1309,6 @@ public class AlertListener implements
         }
     }
 
-    private File getCsvHistoryFile(String alias) {
-        return new File(getCsvOutputDirectory(),
-                "AlertListener_history_" + sanitize(alias) + ".csv");
-    }
-
-    private File getLegacyHistoryFile(String alias) {
-        return new File(getCsvOutputDirectory(),
-                "AlertListener_history_" + sanitize(alias) + ".log");
-    }
-
     private void setAreaToHeader(JTextArea area) {
         area.setText(csvHeader() + "\n");
     }
@@ -1319,16 +1318,9 @@ public class AlertListener implements
         saveConfig();
         System.out.println("Alert Listener stopped. Total alerts received: " + alertCount);
         aggregationExecutor.shutdown();
+        socketReconnectExecutor.shutdownNow();
         ListenableHelper.removeListeners(provider, this);
 
-        // Close Socket
-        try {
-            if (socketWriter != null)
-                socketWriter.close();
-            if (socket != null)
-                socket.close();
-        } catch (IOException e) {
-            // Ignore
-        }
+        closeSocketSilently();
     }
 }

@@ -14,14 +14,43 @@ async def _run_server_once(socket_server: SocketServer):
     return server, port
 
 
-async def _send_records(port: int, records: list[dict]) -> None:
+async def _wait_for_disconnect(socket_server: SocketServer, timeout: float = 5.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while socket_server.writer_identities:
+        if asyncio.get_running_loop().time() >= deadline:
+            raise TimeoutError("socket server did not release client connections in time")
+        await asyncio.sleep(0.05)
+
+
+async def _wait_for_stage(runtime_root, stage: str, predicate, timeout: float = 5.0) -> dict:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        try:
+            snapshot = read_status_json(runtime_root)
+        except FileNotFoundError:
+            snapshot = None
+
+        if snapshot is not None:
+            stage_record = snapshot["stages"][stage]
+            if predicate(stage_record):
+                return stage_record
+
+        if asyncio.get_running_loop().time() >= deadline:
+            raise TimeoutError(f"timed out waiting for stage {stage}")
+        await asyncio.sleep(0.05)
+
+
+async def _send_records(port: int, records: list[dict], close: bool = True):
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     for record in records:
         writer.write((json.dumps(record) + "\n").encode("utf-8"))
         await writer.drain()
+    if not close:
+        return reader, writer
     writer.close()
-    await writer.wait_closed()
+    await asyncio.wait_for(writer.wait_closed(), timeout=5)
     await asyncio.sleep(0.05)
+    return reader, writer
 
 
 def test_connection_hello_updates_ingest_identity(runtime_root, make_connection_hello):
@@ -40,24 +69,31 @@ def test_connection_hello_updates_ingest_identity(runtime_root, make_connection_
 
         server, port = await _run_server_once(socket_server)
         try:
-            await _send_records(
+            _, writer = await _send_records(
                 port,
                 [make_connection_hello("bookmap", "bm-primary", "ES")],
+                close=False,
             )
+            ingest = await _wait_for_stage(
+                runtime_root,
+                "ingest",
+                lambda stage: stage["reason"] == "connected: bookmap/bm-primary",
+            )
+            assert ingest["state"] == "up"
+            assert ingest["reason"] == "connected: bookmap/bm-primary"
+            assert ingest["source"] == "bookmap"
+            assert ingest["source_instance"] == "bm-primary"
+            assert ingest["instrument"] == "ES"
+            assert ingest["reconnect_count"] == 0
+            assert ingest["dropped_events_total"] == 0
+            writer.close()
+            await asyncio.wait_for(writer.wait_closed(), timeout=5)
+            await _wait_for_disconnect(socket_server)
         finally:
             server.close()
-            await server.wait_closed()
+            await asyncio.sleep(0)
 
     asyncio.run(exercise())
-
-    ingest = read_stage(runtime_root, "ingest")
-    assert ingest["state"] == "up"
-    assert ingest["reason"] == "connected: bookmap/bm-primary"
-    assert ingest["source"] == "bookmap"
-    assert ingest["source_instance"] == "bm-primary"
-    assert ingest["instrument"] == "ES"
-    assert ingest["reconnect_count"] == 0
-    assert ingest["dropped_events_total"] == 0
 
 
 def test_disconnect_and_reconnect_preserve_cumulative_drop_counters(
@@ -83,13 +119,14 @@ def test_disconnect_and_reconnect_preserve_cumulative_drop_counters(
                 first_port,
                 [make_connection_hello("bookmap", "bm-primary", "ES", dropped_events_total=3)],
             )
+            await _wait_for_disconnect(socket_server)
         finally:
             first_server.close()
-            await first_server.wait_closed()
+            await asyncio.sleep(0)
 
         second_server, second_port = await _run_server_once(socket_server)
         try:
-            await _send_records(
+            _, writer = await _send_records(
                 second_port,
                 [
                     make_connection_hello(
@@ -100,19 +137,29 @@ def test_disconnect_and_reconnect_preserve_cumulative_drop_counters(
                         dropped_events_total=7,
                     )
                 ],
+                close=False,
             )
+            ingest = await _wait_for_stage(
+                runtime_root,
+                "ingest",
+                lambda stage: (
+                    stage["reason"] == "connected: bookmap/bm-primary"
+                    and stage.get("reconnect_count") == 1
+                    and stage.get("dropped_events_total") == 7
+                ),
+            )
+            assert ingest["state"] == "up"
+            assert ingest["reason"] == "connected: bookmap/bm-primary"
+            assert ingest["reconnect_count"] == 1
+            assert ingest["dropped_events_total"] == 7
+            writer.close()
+            await asyncio.wait_for(writer.wait_closed(), timeout=5)
+            await _wait_for_disconnect(socket_server)
         finally:
             second_server.close()
-            await second_server.wait_closed()
+            await asyncio.sleep(0)
 
     asyncio.run(exercise())
-
-    status_json = read_status_json(runtime_root)
-    ingest = status_json["stages"]["ingest"]
-    assert ingest["state"] == "up"
-    assert ingest["reason"] == "connected: bookmap/bm-primary"
-    assert ingest["reconnect_count"] == 1
-    assert ingest["dropped_events_total"] == 7
 
 
 def test_status_publisher_marks_ingest_degraded_then_down_after_10_and_30_seconds(

@@ -11,7 +11,7 @@ This roadmap turns the existing trading workspace into a coherent local pipeline
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 - [x] **Phase 1: Normalize Event Contract** - Make Bookmap/Python/cTrader pipeline inputs explicit and consistent (completed 2026-03-20)
-- [ ] **Phase 2: Harden Transport & Observability** - Make the local pipeline reconnectable and diagnosable
+- [x] **Phase 2: Harden Transport & Observability** - Make the local pipeline reconnectable and diagnosable (completed 2026-03-23)
 - [ ] **Phase 3: Stabilize Signal State** - Turn asynchronous records into explainable per-symbol state
 - [ ] **Phase 4: Add Safe Execution Controls** - Gate live execution behind validated inputs and explicit modes
 - [ ] **Phase 5: Lock In Build & Verification** - Add repeatable build/smoke/regression workflow for the integrated path
@@ -45,8 +45,9 @@ Plans:
 
 Plans:
 - [ ] 02-01: Improve socket lifecycle and reconnection behavior across Java and Python endpoints
-- [ ] 02-02: Add health/status signaling for ingest, buffering, inference, and execution stages
-- [ ] 02-03: Standardize runtime artifacts, file naming, and operational docs
+- [x] 02-01: Improve socket lifecycle and reconnection behavior across Java and Python endpoints
+- [x] 02-02: Add health/status signaling for ingest, buffering, inference, and execution stages
+- [x] 02-03: Standardize runtime artifacts, file naming, and operational docs
 
 ### Phase 3: Stabilize Signal State
 **Goal**: Make signal formation deterministic enough to inspect, replay, and trust.
@@ -98,7 +99,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Normalize Event Contract | 3/3 | Complete | 2026-03-20 |
-| 2. Harden Transport & Observability | 0/3 | Not started | - |
+| 2. Harden Transport & Observability | 3/3 | Complete | 2026-03-23 |
 | 3. Stabilize Signal State | 0/2 | Not started | - |
 | 4. Add Safe Execution Controls | 0/2 | Not started | - |
 | 5. Lock In Build & Verification | 0/2 | Not started | - |

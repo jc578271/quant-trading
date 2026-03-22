@@ -1,35 +1,114 @@
+from __future__ import annotations
+
 import asyncio
+import contextlib
 import logging
-from mt5_client import MT5Client
-from socket_server import SocketServer
-from ai_analyzer import AIAnalyzer
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+from pipeline_status import HEARTBEAT_SECONDS, PipelineStatus, isoformat_utc, utc_now
 
-async def main():
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+
+async def _heartbeat_loop(status: PipelineStatus) -> None:
+    while True:
+        await asyncio.sleep(HEARTBEAT_SECONDS)
+        status.publish()
+
+
+def _initialize_status(
+    status: PipelineStatus,
+    session_started_at: str,
+    *,
+    mt5_connected: bool,
+    simulator_enabled: bool,
+    execution_errors_total: int,
+) -> None:
+    status.update_stage(
+        "ingest",
+        state="up",
+        reason="listening; awaiting producers",
+        updated_at=session_started_at,
+        connected_sources=[],
+        reconnects_total=0,
+        dropped_events_total=0,
+    )
+    status.update_stage(
+        "buffering",
+        state="degraded",
+        reason="awaiting normalized records",
+        updated_at=session_started_at,
+        buffered_symbols=0,
+        queued_records=0,
+    )
+    status.update_stage(
+        "execution",
+        state="up" if mt5_connected else "degraded",
+        reason="mt5 connected" if mt5_connected else "mt5 disconnected; simulator only",
+        updated_at=session_started_at,
+        mt5_connected=mt5_connected,
+        simulator_enabled=simulator_enabled,
+        execution_errors_total=execution_errors_total,
+    )
+    status.publish(now=session_started_at)
+
+
+async def main() -> None:
+    from ai_analyzer import AIAnalyzer
+    from mt5_client import MT5Client
+    from socket_server import SocketServer
+
+    session_started_at = isoformat_utc(utc_now())
     logging.info("Starting Quantum Trade AI System...")
-    
-    # Initialize MT5 Client
+
+    status = PipelineStatus(session_started_at=session_started_at)
     mt5_client = MT5Client()
-    if not mt5_client.connect():
+    mt5_connected = mt5_client.connect()
+    if not mt5_connected:
         logging.error("Failed to connect to MT5. Ensure MT5 is running and AutoTrading is enabled.")
-        # Proceeding without MT5 strictly for testing socket only (optional)
-        # return
-        
-    # Initialize AI Analyzer
-    analyzer = AIAnalyzer(mt5_client)
-    
-    # Initialize and start Socket Server
-    server = SocketServer(host='127.0.0.1', port=5555, callback=analyzer.process_data)
-    
+
+    analyzer = AIAnalyzer(mt5_client, status=status)
+    _initialize_status(
+        status,
+        session_started_at,
+        mt5_connected=mt5_connected,
+        simulator_enabled=analyzer.simulator is not None,
+        execution_errors_total=0 if mt5_connected else 1,
+    )
+    server = SocketServer(
+        host="127.0.0.1",
+        port=5555,
+        callback=analyzer.process_data,
+        status=status,
+    )
+    heartbeat_task = asyncio.create_task(_heartbeat_loop(status))
+
     try:
         await server.start()
     except KeyboardInterrupt:
         logging.info("Shutting down Application...")
     finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
+        await server.stop()
+
+        shutdown_at = isoformat_utc(utc_now())
+        status.update_stage("ingest", state="down", reason="shutdown", updated_at=shutdown_at)
+        status.update_stage("buffering", state="down", reason="shutdown", updated_at=shutdown_at)
+        status.update_stage("inference", state="down", reason="shutdown", updated_at=shutdown_at)
+        status.update_stage(
+            "execution",
+            state="down",
+            reason="shutdown",
+            updated_at=shutdown_at,
+            mt5_connected=mt5_client.connected,
+            simulator_enabled=analyzer.simulator is not None,
+        )
+        status.publish(now=shutdown_at)
+
         analyzer.shutdown()
         mt5_client.disconnect()
 
-if __name__ == '__main__':
-    # Run the asyncio event loop
+
+if __name__ == "__main__":
     asyncio.run(main())

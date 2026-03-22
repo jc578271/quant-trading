@@ -3,6 +3,9 @@ import csv
 import os
 import time
 from datetime import datetime
+from pathlib import Path
+
+from runtime_paths import TRADE_HISTORY_HEADERS, trade_history_file
 
 class OrderSimulator:
     """
@@ -41,7 +44,8 @@ class OrderSimulator:
         self.open_trades = []       # list of active trade dicts
         self.closed_trades = []     # list of closed trade dicts
         self.trade_counter = 0
-        self.csv_path = cfg.get("trade_log", "trade_history.csv")
+        # Default runtime/trade_history.csv path resolves through runtime_paths.trade_history_file().
+        self.csv_path = cfg.get("trade_log", str(trade_history_file()))
 
         # Cooldown: prevent rapid re-entry after close
         self.last_close_time = 0
@@ -248,13 +252,9 @@ class OrderSimulator:
 
     # ────────── CSV Logging ──────────
     def _log_trade_csv(self, record):
-        headers = [
-            "timestamp", "symbol", "direction", "entry_price",
-            "sl_price", "tp_price", "lot_size", "exit_price",
-            "exit_reason", "pnl_pips", "pnl_dollar", "pnl_percent",
-            "balance_before", "balance_after"
-        ]
+        headers = list(TRADE_HISTORY_HEADERS)
         file_exists = os.path.isfile(self.csv_path)
+        Path(self.csv_path).parent.mkdir(parents=True, exist_ok=True)
         with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
             if not file_exists:

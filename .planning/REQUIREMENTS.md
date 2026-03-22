@@ -13,9 +13,9 @@
 
 ### Pipeline Reliability
 
-- [ ] **PIPE-01**: The producer and consumer processes can start independently and reconnect automatically without manual file edits
-- [ ] **PIPE-02**: Operators can see whether ingest, buffering, inference, and execution stages are currently healthy
-- [ ] **PIPE-03**: Pipeline outputs write predictable files with stable schemas for later replay and diagnosis
+- [x] **PIPE-01**: The producer and consumer processes can start independently and reconnect automatically without manual file edits
+- [x] **PIPE-02**: Operators can see whether ingest, buffering, inference, and execution stages are currently healthy
+- [x] **PIPE-03**: Pipeline outputs write predictable files with stable schemas for later replay and diagnosis
 
 ### Signal Processing
 
@@ -60,9 +60,9 @@
 | DATA-01 | Phase 1 | Complete |
 | DATA-02 | Phase 1 | Complete |
 | DATA-03 | Phase 1 | Complete |
-| PIPE-01 | Phase 2 | Pending |
-| PIPE-02 | Phase 2 | Pending |
-| PIPE-03 | Phase 2 | Pending |
+| PIPE-01 | Phase 2 | Complete |
+| PIPE-02 | Phase 2 | Complete |
+| PIPE-03 | Phase 2 | Complete |
 | SIGN-01 | Phase 3 | Pending |
 | SIGN-02 | Phase 3 | Pending |
 | EXEC-01 | Phase 4 | Pending |
@@ -77,4 +77,4 @@
 
 ---
 *Requirements defined: 2026-03-18*
-*Last updated: 2026-03-20 after Phase 1 completion*
+*Last updated: 2026-03-23 after Phase 2 completion*

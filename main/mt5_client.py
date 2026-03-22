@@ -1,17 +1,28 @@
-import MetaTrader5 as mt5
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+try:
+    import MetaTrader5 as mt5
+except ModuleNotFoundError:
+    mt5 = None
+
 class MT5Client:
     def __init__(self):
         self.connected = False
+        self.last_error = None
 
     def connect(self):
+        if mt5 is None:
+            self.last_error = "MetaTrader5 module not available"
+            logging.error(self.last_error)
+            return False
         if not mt5.initialize():
-            logging.error(f"initialize() failed, error code = {mt5.last_error()}")
+            self.last_error = str(mt5.last_error())
+            logging.error(f"initialize() failed, error code = {self.last_error}")
             return False
         self.connected = True
+        self.last_error = None
         logging.info("Connected to MetaTrader 5")
         return True
 

@@ -1,19 +1,24 @@
 import logging
 import os
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-import joblib
 from order_simulator import OrderSimulator
+from runtime_paths import (
+    ALERT_HISTORY_HEADERS,
+    event_history_file,
+    event_history_headers,
+    alert_history_file,
+    model_file,
+)
 
 class AIAnalyzer:
-    def __init__(self, mt5_client, model_path="model.pkl", sim_config=None):
+    def __init__(self, mt5_client, model_path=None, sim_config=None, status=None):
         self.mt5_client = mt5_client
+        self.status = status
         self.raw_data_buffer = {}  # Map: symbol -> list of raw data dicts
         self.latest_state = {}     # Map: symbol -> current combined state
         self.order_book = {}
         self.last_buffer_process_time = 0
-        self.model_path = model_path
+        self.model_path = model_path or str(model_file())
+        self.inference_errors_total = 0
         
         # Feature definition for the model
         self.feature_keys = ["delta", "wyckoff_wave", "poc_distance", "tick_vol"]
@@ -33,43 +38,97 @@ class AIAnalyzer:
             "pip_value_per_lot": 10.0,
         })
 
+    def _publish_buffering_status(self, reason, state="degraded"):
+        if self.status is None:
+            return
+        buffered_symbols = sum(1 for records in self.raw_data_buffer.values() if records)
+        queued_records = sum(len(records) for records in self.raw_data_buffer.values())
+        self.status.update_stage(
+            "buffering",
+            state=state,
+            reason=reason,
+            buffered_symbols=buffered_symbols,
+            queued_records=queued_records,
+        )
+        self.status.publish()
+
+    def _publish_inference_status(self, reason, state="up", last_inference_at=None):
+        if self.status is None:
+            return
+        self.status.update_stage(
+            "inference",
+            state=state,
+            reason=reason,
+            model_loaded=self.model is not None,
+            last_inference_at=last_inference_at,
+            inference_errors_total=self.inference_errors_total,
+        )
+        self.status.publish()
+
     def _load_or_train_initial_model(self):
         """Tải mô hình AI thật, nếu chưa có thì train một mô hình giả lập ban đầu."""
-        if os.path.exists(self.model_path):
-            logging.info(f"Loading existing AI model from {self.model_path}...")
-            return joblib.load(self.model_path)
-            
-        logging.info("No AI model found. Training initial dummy model...")
-        # Dummy data matches self.feature_keys: [delta, wyckoff_wave, poc_distance, tick_vol]
-        X_train = np.array([
-            [ 1000,   50,   0.0010,  500],
-            [-1000,  -50,  -0.0010,  500],
-            [  100,    0,   0.0000,  100],
-            [  800,   30,   0.0005,  400],
-            [ -800,  -30,  -0.0005,  400],
-        ])
-        y_train = np.array([1, -1, 0, 1, -1])
-        
-        model = RandomForestClassifier(n_estimators=50, random_state=42)
-        model.fit(X_train, y_train)
-        
-        joblib.dump(model, self.model_path)
-        logging.info("Saved initial AI model to disk.")
-        return model
+        try:
+            import joblib
+            import numpy as np
+            from sklearn.ensemble import RandomForestClassifier
+
+            if os.path.exists(self.model_path):
+                logging.info(f"Loading existing AI model from {self.model_path}...")
+                model = joblib.load(self.model_path)
+            else:
+                logging.info("No AI model found. Training initial dummy model...")
+                # Dummy data matches self.feature_keys: [delta, wyckoff_wave, poc_distance, tick_vol]
+                X_train = np.array([
+                    [ 1000,   50,   0.0010,  500],
+                    [-1000,  -50,  -0.0010,  500],
+                    [  100,    0,   0.0000,  100],
+                    [  800,   30,   0.0005,  400],
+                    [ -800,  -30,  -0.0005,  400],
+                ])
+                y_train = np.array([1, -1, 0, 1, -1])
+                
+                model = RandomForestClassifier(n_estimators=50, random_state=42)
+                model.fit(X_train, y_train)
+                
+                joblib.dump(model, self.model_path)
+                logging.info("Saved initial AI model to disk.")
+
+            if self.status is not None:
+                self.model = model
+                self._publish_inference_status("model loaded", state="up")
+            return model
+        except ModuleNotFoundError as e:
+            self.inference_errors_total += 1
+            self.model = None
+            logging.error(f"Model dependencies unavailable: {e}")
+            self._publish_inference_status("model dependencies unavailable", state="degraded")
+            return None
+        except Exception as e:
+            self.inference_errors_total += 1
+            self.model = None
+            self._publish_inference_status("model load failed", state="degraded")
+            raise
 
     def export_individual_csv(self, symbol, data):
-        """Dynamic CSV export based on received data keys, replacing hard-coded logic."""
+        """Export indicator events to stable runtime CSV files with fixed headers."""
         import csv
         import json
-        import os
         
         msg_type = data.get("event", data.get("type", "unknown"))
         if msg_type == "unknown":
-            if "wyckoffVolume" in data: msg_type = "wyckoff"
-            elif "vpPOC" in data: msg_type = "volumeprofile"
-            elif "deltaRank" in data: msg_type = "orderflow"
-            
-        filename = f"history_{msg_type.lower().replace('_', '')}.csv"
+            if "wyckoffVolume" in data:
+                msg_type = "wyckoff_state"
+            elif "vpPOC" in data:
+                msg_type = "volume_profile"
+            elif "deltaRank" in data:
+                msg_type = "order_flow_aggregated"
+
+        headers = event_history_headers(msg_type)
+        if not headers:
+            logging.warning(f"Skipping runtime CSV export for unsupported event type: {msg_type}")
+            return
+
+        filename = event_history_file(msg_type)
         
         row = data.copy()
         row["symbol"] = symbol
@@ -78,32 +137,17 @@ class AIAnalyzer:
         for k, v in row.items():
             if isinstance(v, (dict, list)):
                 row[k] = json.dumps(v)
-        
-        # Dynamic header management: Read existing headers or create new ones
-        file_exists = os.path.isfile(filename) and os.path.getsize(filename) > 0
-        fieldnames = []
-        if file_exists:
-            try:
-                with open(filename, 'r', encoding='utf-8') as f:
-                    fieldnames = next(csv.reader(f), [])
-            except Exception:
-                fieldnames = []
-        
-        # Append any new keys discovered in this row to the headers
-        current_keys = sorted(row.keys())
-        for k in current_keys:
-            if k not in fieldnames:
-                fieldnames.append(k)
-        
-        if not fieldnames:
-            fieldnames = current_keys
+
+        ordered_row = {header: row.get(header, "") for header in headers}
+        file_exists = filename.is_file() and filename.stat().st_size > 0
+        filename.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             with open(filename, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+                writer = csv.DictWriter(f, fieldnames=list(headers), extrasaction='ignore')
                 if not file_exists:
                     writer.writeheader()
-                writer.writerow(row)
+                writer.writerow(ordered_row)
         except Exception as e:
             logging.error(f"CSV Export Error for {filename}: {e}")
 
@@ -114,7 +158,7 @@ class AIAnalyzer:
         
         # Sanitize symbol for filename
         clean_symbol = "".join(c if c.isalnum() or c in ".-" else "_" for c in symbol)
-        filename = f"history_alert_{clean_symbol}.csv"
+        filename = alert_history_file(clean_symbol)
         
         # Parse specific fields from the text
         import re
@@ -155,8 +199,9 @@ class AIAnalyzer:
             "RawText": text
         }
         
-        file_exists = os.path.isfile(filename) and os.path.getsize(filename) > 0
-        fieldnames = ["Timestamp", "AlertNumber", "Symbol", "AlertName", "Value", "Price", "Popup", "RawText"]
+        file_exists = filename.is_file() and filename.stat().st_size > 0
+        fieldnames = list(ALERT_HISTORY_HEADERS)
+        filename.parent.mkdir(parents=True, exist_ok=True)
         
         try:
             with open(filename, 'a', newline='', encoding='utf-8') as f:
@@ -231,6 +276,7 @@ class AIAnalyzer:
             self.latest_state[symbol] = {}
             
         self.raw_data_buffer[symbol].append(merged_data)
+        self._publish_buffering_status("awaiting buffered data", state="up")
         
         now = time.time()
         if len(self.raw_data_buffer[symbol]) > 100 or (now - self.last_buffer_process_time > 2.0):
@@ -240,6 +286,14 @@ class AIAnalyzer:
     def _process_buffer(self, symbol):
         buffer = self.raw_data_buffer[symbol]
         if not buffer: return
+        self._publish_buffering_status("processing buffered data", state="up")
+        if self.model is None:
+            self._publish_inference_status("model dependencies unavailable", state="degraded")
+            self.raw_data_buffer[symbol] = []
+            self._publish_buffering_status("awaiting normalized records", state="degraded")
+            return
+
+        import numpy as np
         
         # Sort chronologically by timestamp
         buffer.sort(key=lambda x: x.get("timestamp", ""))
@@ -280,6 +334,11 @@ class AIAnalyzer:
             try:
                 prediction = self.model.predict(features)[0]
                 probability = np.max(self.model.predict_proba(features))
+                self._publish_inference_status(
+                    "model loaded",
+                    state="up",
+                    last_inference_at=data.get("timestamp"),
+                )
                 
                 # Only trade if model is confident
                 if probability > 0.65:
@@ -290,9 +349,12 @@ class AIAnalyzer:
                         
             except Exception as e:
                 logging.error(f"AI Prediction Error: {e}")
+                self.inference_errors_total += 1
+                self._publish_inference_status("prediction failed", state="degraded")
                 
         # Clear buffer after processing
         self.raw_data_buffer[symbol] = []
+        self._publish_buffering_status("awaiting normalized records", state="degraded")
 
     def shutdown(self):
         """Print final session summary."""
