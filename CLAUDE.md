@@ -75,4 +75,12 @@ Before completing any code modification task, verify:
 - Check freshness: `npx gitnexus status`
 - Generate docs: `npx gitnexus wiki`
 
+## Recovery
+
+- If GitNexus MCP tools fail with transport errors, stale-index confusion, or inconsistent repo stats, recover in this exact order:
+  1. `npx gitnexus clean --force`
+  2. `npx gitnexus analyze`
+  3. Retry the GitNexus MCP call (`query`, `context`, `impact`, `detect_changes`, etc.)
+- Prefer this recovery sequence before assuming the GitNexus MCP server is unusable.
+
 <!-- gitnexus:end -->
