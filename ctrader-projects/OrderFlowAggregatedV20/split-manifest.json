@@ -1,5 +1,5 @@
 {
-  "sourcePath": "..\\..\\ctrader-indicators\\Raw Source Code\\Order Flow Aggregated v2.0.cs",
+  "sourcePath": "..\\..\\..\\ctrader-indicators\\Raw Source Code\\Order Flow Aggregated v2.0.cs",
   "targetDir": ".\\src",
   "mainOutputFileName": "Order Flow Aggregated v2.0.cs",
   "sharedHeader": {

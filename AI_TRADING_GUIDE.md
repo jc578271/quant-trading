@@ -12,7 +12,7 @@ Hệ thống được chia làm 3 mảng chức năng chính:
 
 ## 2. Cấu trúc Codebase
 
-### A. Phía cTrader (`ctrader-indicators/Raw Source Code/`)
+### A. Phía cTrader (`../ctrader-indicators/Raw Source Code/`)
 Các file biểu đồ mã nguồn C# nguyên bản đã được trang bị Socket Native. 
 - **`Order Flow Aggregated v2.0.cs`**: Xuất toàn bộ mảng dữ liệu Footprint (Volume Levels, Bids, Asks, Delta, Max/Min Delta).
 - **`Weis & Wyckoff System v2.0.cs`**: Xuất thông tin cấu trúc sóng (Wave Volume, Direction, Price, ZigZag).

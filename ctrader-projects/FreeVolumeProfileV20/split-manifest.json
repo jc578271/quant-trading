@@ -1,5 +1,5 @@
 {
-  "sourcePath": "..\\..\\ctrader-indicators\\Raw Source Code\\Free Volume Profile v2.0.cs",
+  "sourcePath": "..\\..\\..\\ctrader-indicators\\Raw Source Code\\Free Volume Profile v2.0.cs",
   "targetDir": ".\\src",
   "mainOutputFileName": "Free Volume Profile v2.0.cs",
   "sharedHeader": {

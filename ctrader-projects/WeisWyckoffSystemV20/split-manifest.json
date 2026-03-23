@@ -1,5 +1,5 @@
 {
-  "sourcePath": "..\\..\\ctrader-indicators\\Raw Source Code\\Weis & Wyckoff System v2.0.cs",
+  "sourcePath": "..\\..\\..\\ctrader-indicators\\Raw Source Code\\Weis & Wyckoff System v2.0.cs",
   "targetDir": ".\\src",
   "mainOutputFileName": "Weis & Wyckoff System v2.0.cs",
   "sharedHeader": {

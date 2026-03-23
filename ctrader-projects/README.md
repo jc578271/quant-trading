@@ -21,7 +21,7 @@ This folder is the shared build environment for multi-file cTrader indicators.
 
 - Each indicator gets its own folder under `ctrader-projects`
 - The buildable `.csproj` stays in that indicator's `src` folder
-- The raw single-file source in `ctrader-indicators/Raw Source Code` remains the cTrader import/export target
+- The raw single-file source in `..\\ctrader-indicators\\Raw Source Code` remains the cTrader import/export target
 - The multi-file project under `ctrader-projects` is the maintainable source for IDE work, GitNexus exploration, and builds
 - After build, each generated `.algo` is copied automatically to `Documents\cAlgo\Sources\Indicators`
 
@@ -48,7 +48,7 @@ powershell -ExecutionPolicy Bypass -File D:\projects\quant-trading\ctrader-proje
 
 ## Merge Back To Raw Source
 
-Write the split project files back into `ctrader-indicators/Raw Source Code`:
+Write the split project files back into `..\\ctrader-indicators\\Raw Source Code`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File D:\projects\quant-trading\ctrader-projects\Merge-CTraderIndicator.ps1 `
