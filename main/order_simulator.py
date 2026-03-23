@@ -1,16 +1,15 @@
 import logging
-import csv
-import os
+import json
 import time
 from datetime import datetime
 from pathlib import Path
 
-from runtime_paths import TRADE_HISTORY_HEADERS, trade_history_file
+from runtime_paths import TRADE_HISTORY_KEYS, trade_history_file
 
 class OrderSimulator:
     """
     Paper-trading order simulator.
-    Tracks simulated positions, P&L, and logs trade history to CSV.
+    Tracks simulated positions, P&L, and logs trade history to JSONL.
     """
     def __init__(self, config=None):
         cfg = config or {}
@@ -44,7 +43,7 @@ class OrderSimulator:
         self.open_trades = []       # list of active trade dicts
         self.closed_trades = []     # list of closed trade dicts
         self.trade_counter = 0
-        # Default runtime/trade_history.csv path resolves through runtime_paths.trade_history_file().
+        # Default runtime/trade_history.jsonl path resolves through runtime_paths.trade_history_file().
         self.csv_path = cfg.get("trade_log", str(trade_history_file()))
 
         # Cooldown: prevent rapid re-entry after close
@@ -230,7 +229,7 @@ class OrderSimulator:
             f"\033[0m"
         )
 
-        # Log to CSV
+        # Log to JSONL
         closed_record = {
             "timestamp": datetime.utcnow().isoformat(),
             "symbol": trade["symbol"],
@@ -248,18 +247,18 @@ class OrderSimulator:
             "balance_after": round(self.balance, 2),
         }
         self.closed_trades.append(closed_record)
-        self._log_trade_csv(closed_record)
+        self._log_trade_jsonl(closed_record)
 
     # ────────── CSV Logging ──────────
-    def _log_trade_csv(self, record):
-        headers = list(TRADE_HISTORY_HEADERS)
-        file_exists = os.path.isfile(self.csv_path)
+    def _log_trade_jsonl(self, record):
+        ordered_record = {key: record.get(key) for key in TRADE_HISTORY_KEYS}
         Path(self.csv_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow(record)
+        with open(self.csv_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(ordered_record, ensure_ascii=False, separators=(",", ":")))
+            f.write("\n")
+
+    def _log_trade_csv(self, record):
+        self._log_trade_jsonl(record)
 
     # ────────── Summary ──────────
     def get_summary(self):

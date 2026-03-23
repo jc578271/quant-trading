@@ -90,24 +90,7 @@ namespace cAlgo
         private bool _isManualCsvExportInProgress;
         private const string DefaultCsvOutputFolder = @"D:\projects\quant-trading\logs";
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
-        private static readonly string[] ExportCsvHeaders =
-        {
-            "symbol",
-            "timeframe",
-            "timestamp",
-            "open",
-            "high",
-            "low",
-            "close",
-            "wyckoffVolume",
-            "wyckoffTime",
-            "zigZag",
-            "waveVolume",
-            "wavePrice",
-            "waveVolPrice",
-            "waveDirection",
-            "spread"
-        };
+        private const string HistoryFileSchema = "wyckoff-history/v2";
         private const string EventContractSchema = "event-contract/v1";
         private const string EventSource = "ctrader";
         private const string SourceInstanceName = "WeisWyckoffSystemV20";
@@ -139,7 +122,7 @@ namespace cAlgo
         private double _expCumulVolPrice;
         private string _expWaveDirection = "None";
 
-        [Parameter("CSV Output Folder", DefaultValue = DefaultCsvOutputFolder, Group = "==== Python AI Export ====")]
+        [Parameter("History Output Folder", DefaultValue = DefaultCsvOutputFolder, Group = "==== Python AI Export ====")]
         public string CsvOutputFolder { get; set; }
 
         public enum LoadTickFrom_Data

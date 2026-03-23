@@ -5,11 +5,13 @@ __pycache__
 
 .gitnexus
 .dotnet-cli/
+.dotnet/
 .nuget/
 .idea/
 .npm-cache/
 .dotnet-home/
 .ctrader-indicators-test/
 .tmp/
+.gradle-cache/
 runtime/
 logs/

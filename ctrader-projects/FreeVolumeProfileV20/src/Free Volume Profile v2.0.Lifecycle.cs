@@ -275,9 +275,9 @@ namespace cAlgo
                 ConnectSocket();
                 _isManualCsvExportInProgress = true;
 
-                Print("Starting Volume Profile Export...");
+                Print("Starting Volume Profile History Export...");
                 ClearAndRecalculate();
-                Print("Volume Profile Export Finished.");
+                Print("Volume Profile History Export Finished.");
             }
             catch (Exception ex)
             {
@@ -621,7 +621,7 @@ namespace cAlgo
             return BuildContractEnvelope(index, payload, sourceMeta);
         }
 
-        private void AppendDirectCsv(Dictionary<string, object> exportData)
+        private void AppendDirectHistoryJsonl(Dictionary<string, object> exportData)
         {
             if (!_isManualCsvExportInProgress)
                 return;
@@ -630,72 +630,138 @@ namespace cAlgo
             Directory.CreateDirectory(outputFolder);
 
             string symbol = ResolveExportSymbol(exportData, sourceMeta: null);
-            string filePath = Path.Combine(outputFolder, $"history_volumeprofile_{symbol}.csv");
-            bool writeHeader = !File.Exists(filePath) || new FileInfo(filePath).Length == 0;
+            string filePath = Path.Combine(outputFolder, $"history_volumeprofile_{symbol}.jsonl");
+            Dictionary<string, object> historyRecord = BuildHistoryExportRecord(exportData);
 
             using (StreamWriter writer = new StreamWriter(filePath, true, Utf8NoBom))
             {
-                if (writeHeader)
-                    writer.WriteLine(string.Join(",", ExportCsvHeaders));
-
-                var payload = exportData["payload"] as Dictionary<string, object>;
-                var sourceMeta = exportData["source_meta"] as Dictionary<string, object>;
-                if (payload == null || sourceMeta == null)
-                    return;
-
-                Dictionary<double, double> volumesRank = GetDoubleDictionary(payload, "volumesRank");
-                Dictionary<double, double> volumesRankUp = GetDoubleDictionary(payload, "volumesRankUp");
-                Dictionary<double, double> volumesRankDown = GetDoubleDictionary(payload, "volumesRankDown");
-                Dictionary<double, double> deltaRank = GetDoubleDictionary(payload, "deltaRank");
-                double[] minMaxDelta = GetMinMaxDelta(payload);
-
-                double[] orderedPriceLevels = volumesRank.Keys
-                    .Concat(volumesRankUp.Keys)
-                    .Concat(volumesRankDown.Keys)
-                    .Concat(deltaRank.Keys)
-                    .Distinct()
-                    .OrderBy(price => price)
-                    .ToArray();
-
-                foreach (double priceLevel in orderedPriceLevels)
-                {
-                    string[] rowValues = new string[ExportCsvHeaders.Length];
-
-                    for (int i = 0; i < ExportCsvHeaders.Length; i++)
-                    {
-                        string key = ExportCsvHeaders[i];
-                        object value = ResolveFlattenedExportValue(
-                            exportData,
-                            sourceMeta,
-                            payload,
-                            key,
-                            priceLevel,
-                            volumesRank,
-                            volumesRankUp,
-                            volumesRankDown,
-                            deltaRank,
-                            minMaxDelta);
-                        rowValues[i] = EscapeCsvValue(ConvertExportValue(value));
-                    }
-
-                    writer.WriteLine(string.Join(",", rowValues));
-                }
+                writer.WriteLine(JsonSerializer.Serialize(historyRecord));
             }
         }
 
-        private string ConvertExportValue(object value)
+        private Dictionary<string, object> BuildHistoryExportRecord(Dictionary<string, object> exportData)
         {
-            if (value == null)
-                return string.Empty;
+            var payload = exportData["payload"] as Dictionary<string, object>;
+            var sourceMeta = exportData["source_meta"] as Dictionary<string, object>;
+            if (payload == null || sourceMeta == null)
+                throw new InvalidOperationException("History export requires payload and source_meta.");
 
-            if (value is string stringValue)
-                return stringValue;
+            Dictionary<double, double> volumesRank = GetDoubleDictionary(payload, "volumesRank");
+            Dictionary<double, double> volumesRankUp = GetDoubleDictionary(payload, "volumesRankUp");
+            Dictionary<double, double> volumesRankDown = GetDoubleDictionary(payload, "volumesRankDown");
+            Dictionary<double, double> deltaRank = GetDoubleDictionary(payload, "deltaRank");
+            double[] minMaxDelta = GetMinMaxDelta(payload);
+            double closePrice = ReadNumericValue(payload, "close");
+            double tickSize = Symbol.TickSize > 0 ? Symbol.TickSize : (Symbol.PipSize > 0 ? Symbol.PipSize : 1.0);
 
-            Type valueType = value.GetType();
-            if (valueType.IsArray || (value is System.Collections.IEnumerable && !(value is string)))
-                return JsonSerializer.Serialize(value);
+            double[] orderedPriceLevels = volumesRank.Keys
+                .Concat(volumesRankUp.Keys)
+                .Concat(volumesRankDown.Keys)
+                .Concat(deltaRank.Keys)
+                .Distinct()
+                .OrderBy(price => price)
+                .ToArray();
 
-            return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+            List<Dictionary<string, object>> levelRecords = new List<Dictionary<string, object>>(orderedPriceLevels.Length);
+            double totalVolume = 0;
+            double totalBuyVolume = 0;
+            double totalSellVolume = 0;
+            double totalDelta = 0;
+            double absoluteDelta = 0;
+            double pocPrice = ReadNumericValue(payload, "vpPOC");
+            double pocVolume = double.MinValue;
+
+            foreach (double priceLevel in orderedPriceLevels)
+            {
+                double totalAtPrice = volumesRank.TryGetValue(priceLevel, out double totalLevelVolume) ? totalLevelVolume : 0;
+                double buyAtPrice = volumesRankUp.TryGetValue(priceLevel, out double buyLevelVolume) ? buyLevelVolume : 0;
+                double sellAtPrice = volumesRankDown.TryGetValue(priceLevel, out double sellLevelVolume) ? sellLevelVolume : 0;
+                double deltaAtPrice = deltaRank.TryGetValue(priceLevel, out double levelDelta) ? levelDelta : 0;
+
+                totalVolume += totalAtPrice;
+                totalBuyVolume += buyAtPrice;
+                totalSellVolume += sellAtPrice;
+                totalDelta += deltaAtPrice;
+                absoluteDelta += Math.Abs(deltaAtPrice);
+
+                if (totalAtPrice > pocVolume)
+                {
+                    pocVolume = totalAtPrice;
+                    pocPrice = priceLevel;
+                }
+
+                levelRecords.Add(new Dictionary<string, object>
+                {
+                    ["price"] = priceLevel,
+                    ["distance_to_close_ticks"] = Math.Round((priceLevel - closePrice) / tickSize, 4),
+                    ["volume_total"] = totalAtPrice,
+                    ["volume_buy"] = buyAtPrice,
+                    ["volume_sell"] = sellAtPrice,
+                    ["delta"] = deltaAtPrice
+                });
+            }
+
+            Dictionary<string, object> historyRecord = new Dictionary<string, object>
+            {
+                ["schema"] = HistoryFileSchema,
+                ["source_event_schema"] = ResolveExportValue(exportData, "schema") ?? EventContractSchema,
+                ["source"] = ResolveExportValue(exportData, "source") ?? EventSource,
+                ["source_instance"] = ResolveExportValue(exportData, "source_instance") ?? SourceInstanceName,
+                ["event"] = ResolveExportValue(exportData, "event") ?? ExportEventName,
+                ["event_id"] = ResolveExportValue(exportData, "event_id") ?? string.Empty,
+                ["instrument"] = ResolveExportValue(exportData, "instrument") ?? Symbol.Name,
+                ["timeframe"] = ResolveSourceMetaValue(exportData, sourceMeta, "timeframe") ?? Chart.TimeFrame.ShortName,
+                ["timestamp"] = ResolveExportValue(exportData, "timestamp") ?? Bars.OpenTimes.LastValue.ToString("o"),
+                ["profile_type"] = payload.TryGetValue("profile_type", out object profileType) ? profileType : string.Empty,
+                ["bar_closed"] = true,
+                ["bar"] = new Dictionary<string, object>
+                {
+                    ["open"] = ReadNumericValue(payload, "open"),
+                    ["high"] = ReadNumericValue(payload, "high"),
+                    ["low"] = ReadNumericValue(payload, "low"),
+                    ["close"] = closePrice,
+                    ["vpPOC"] = ReadNumericValue(payload, "vpPOC"),
+                    ["vpVAH"] = ReadNumericValue(payload, "vpVAH"),
+                    ["vpVAL"] = ReadNumericValue(payload, "vpVAL"),
+                    ["vpTotalVolume"] = ReadNumericValue(payload, "vpTotalVolume"),
+                    ["spread"] = ReadNumericValue(payload, "spread"),
+                    ["tick_size"] = tickSize
+                },
+                ["summary"] = new Dictionary<string, object>
+                {
+                    ["level_count"] = levelRecords.Count,
+                    ["total_volume"] = totalVolume,
+                    ["buy_volume"] = totalBuyVolume,
+                    ["sell_volume"] = totalSellVolume,
+                    ["delta_sum"] = totalDelta,
+                    ["abs_delta_sum"] = absoluteDelta,
+                    ["min_delta"] = minMaxDelta.Length > 0 ? minMaxDelta[0] : 0,
+                    ["max_delta"] = minMaxDelta.Length > 1 ? minMaxDelta[1] : 0,
+                    ["poc_price"] = levelRecords.Count > 0 ? pocPrice : closePrice,
+                    ["poc_distance_to_close_ticks"] = levelRecords.Count > 0
+                        ? Math.Round((pocPrice - closePrice) / tickSize, 4)
+                        : 0
+                },
+                ["levels"] = levelRecords,
+                ["source_meta"] = new Dictionary<string, object>(sourceMeta)
+            };
+
+            return historyRecord;
+        }
+
+        private double ReadNumericValue(Dictionary<string, object> payload, string key)
+        {
+            if (!payload.TryGetValue(key, out object value) || value == null)
+                return 0;
+
+            try
+            {
+                return Convert.ToDouble(value, CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         private object ResolveExportValue(Dictionary<string, object> exportData, string key)
@@ -752,45 +818,6 @@ namespace cAlgo
             return new double[] { 0, 0 };
         }
 
-        private object ResolveFlattenedExportValue(
-            Dictionary<string, object> exportData,
-            Dictionary<string, object> sourceMeta,
-            Dictionary<string, object> payload,
-            string key,
-            double priceLevel,
-            Dictionary<double, double> volumesRank,
-            Dictionary<double, double> volumesRankUp,
-            Dictionary<double, double> volumesRankDown,
-            Dictionary<double, double> deltaRank,
-            double[] minMaxDelta)
-        {
-            switch (key)
-            {
-                case "profile_type":
-                    return payload.TryGetValue("profile_type", out object profileType) ? profileType : string.Empty;
-                case "symbol":
-                    return ResolveSourceMetaValue(exportData, sourceMeta, "symbol");
-                case "timeframe":
-                    return ResolveSourceMetaValue(exportData, sourceMeta, "timeframe");
-                case "price_level":
-                    return priceLevel;
-                case "volume_total":
-                    return volumesRank.TryGetValue(priceLevel, out double totalVolume) ? totalVolume : 0;
-                case "volume_buy":
-                    return volumesRankUp.TryGetValue(priceLevel, out double buyVolume) ? buyVolume : 0;
-                case "volume_sell":
-                    return volumesRankDown.TryGetValue(priceLevel, out double sellVolume) ? sellVolume : 0;
-                case "delta":
-                    return deltaRank.TryGetValue(priceLevel, out double delta) ? delta : 0;
-                case "min_delta":
-                    return minMaxDelta.Length > 0 ? minMaxDelta[0] : 0;
-                case "max_delta":
-                    return minMaxDelta.Length > 1 ? minMaxDelta[1] : 0;
-                default:
-                    return payload.TryGetValue(key, out object value) ? value : ResolveExportValue(exportData, key);
-            }
-        }
-
         private object ResolveSourceMetaValue(
             Dictionary<string, object> exportData,
             Dictionary<string, object> sourceMeta,
@@ -832,28 +859,16 @@ namespace cAlgo
             return builder.ToString();
         }
 
-        private string EscapeCsvValue(string value)
-        {
-            if (value == null)
-                return string.Empty;
-
-            bool mustQuote = value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r');
-            if (!mustQuote)
-                return value;
-
-            return "\"" + value.Replace("\"", "\"\"") + "\"";
-        }
-
         private void ExportCsvData(int index, string profileType, Dictionary<double, double> volRank, Dictionary<double, double> volUp, Dictionary<double, double> volDown, Dictionary<double, double> deltaRank, double[] minMaxDelta)
         {
             try
             {
                 Dictionary<string, object> exportData = BuildExportPayload(index, profileType, volRank, volUp, volDown, deltaRank, minMaxDelta);
-                AppendDirectCsv(exportData);
+                AppendDirectHistoryJsonl(exportData);
             }
             catch (Exception ex)
             {
-                Print("CSV Export Error: " + ex.Message);
+                Print("History Export Error: " + ex.Message);
             }
         }
 

@@ -25,6 +25,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Layer1Attachable
 @Layer1StrategyName("Alert Listener")
@@ -91,7 +92,8 @@ public class AlertListener implements
     private PrintWriter socketWriter;
     private static final String HOST = "127.0.0.1";
     private static final int PORT = 5555;
-    private static final String DEFAULT_CSV_OUTPUT_PATH = "D:\\projects\\quant-trading\\logs";
+    private static final String DEFAULT_HISTORY_OUTPUT_PATH = "D:\\projects\\quant-trading\\logs";
+    private static final String HISTORY_FILE_SCHEMA = "bookmap-history/v1";
     private final Object socketLock = new Object();
     private final ScheduledExecutorService socketReconnectExecutor = Executors.newSingleThreadScheduledExecutor();
     private static final long SOCKET_RECONNECT_DELAY_SECONDS = 5L;
@@ -102,6 +104,7 @@ public class AlertListener implements
     private boolean hasConnectedOnce = false;
     private long reconnectCount = 0L;
     private long droppedEventsTotal = 0L;
+    private final AtomicLong historySequence = new AtomicLong();
 
     // DOM State Tracking: alias -> OrderBook
     // Note: Bookmap automatically backfills historical data from the chart into
@@ -110,7 +113,7 @@ public class AlertListener implements
 
     // Files for persistence
     private final File configFile;
-    private String csvOutputPath = DEFAULT_CSV_OUTPUT_PATH;
+    private String historyOutputPath = DEFAULT_HISTORY_OUTPUT_PATH;
 
     // Per-instrument settings
     private static class InstrumentSettings {
@@ -355,27 +358,67 @@ public class AlertListener implements
 
     private String logCsvRow(String alias, CsvLogRow row) {
         String csvLine = toCsvLine(row);
-        appendLogToFile(alias, csvLine);
+        appendHistoryLogRow(alias, row);
         updateUI(alias, csvLine);
         return csvLine;
     }
 
-    private void appendLogToFile(String alias, String csvLine) {
-        if (alias == null || alias.trim().isEmpty()) {
+    private void appendHistoryLogRow(String alias, CsvLogRow row) {
+        if (alias == null || alias.trim().isEmpty() || row == null) {
             return;
         }
 
         try {
-            appendCsvLine(getCsvOutputFile(alias), csvLine);
+            appendJsonLine(
+                    getHistoryOutputFile(alias),
+                    toJson(buildLogHistoryRecord(alias, row, historySequence.incrementAndGet())));
         } catch (IOException e) {
-            System.err.println("Error writing CSV log for " + alias + ": " + e.getMessage());
+            System.err.println("Error writing history record for " + alias + ": " + e.getMessage());
         }
     }
 
-    private File getCsvOutputDirectory() {
-        String configuredPath = csvOutputPath == null ? "" : csvOutputPath.trim();
+    private Map<String, Object> buildLogHistoryRecord(String alias, CsvLogRow row, long sequence) {
+        String event = normalizeHistoryEventName(row.type);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", nonNull(row.type));
+        payload.put("side", nonNull(row.side));
+        payload.put("price", nonNull(row.price));
+        payload.put("value", nonNull(row.value));
+        payload.put("price_min", nonNull(row.priceMin));
+        payload.put("price_max", nonNull(row.priceMax));
+        payload.put("bid_size", nonNull(row.bidSize));
+        payload.put("ask_size", nonNull(row.askSize));
+        payload.put("duration_sec", nonNull(row.durationSec));
+        payload.put("raw_text", nonNull(row.rawText));
+
+        Map<String, Object> sourceMeta = new LinkedHashMap<>();
+        sourceMeta.put("alias", alias);
+        sourceMeta.put("history_mode", "aggregated_log");
+
+        Map<String, Object> record = new LinkedHashMap<>();
+        record.put("schema", HISTORY_FILE_SCHEMA);
+        record.put("source_event_schema", "bookmap-log-row/v1");
+        record.put("source", EVENT_SOURCE);
+        record.put("source_instance", EVENT_SOURCE_INSTANCE);
+        record.put("event", event);
+        record.put("event_id", buildEventId(event + "-" + sequence, alias, row.timestamp));
+        record.put("instrument", alias);
+        record.put("timestamp", row.timestamp);
+        record.put("sequence", sequence);
+        record.put("payload", payload);
+        record.put("source_meta", sourceMeta);
+        return record;
+    }
+
+    private String normalizeHistoryEventName(String rawType) {
+        String safe = nonNull(rawType).trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "_");
+        return safe.isEmpty() ? "log" : safe.replaceAll("^_+|_+$", "");
+    }
+
+    private File getHistoryOutputDirectory() {
+        String configuredPath = historyOutputPath == null ? "" : historyOutputPath.trim();
         File directory = configuredPath.isEmpty()
-                ? new File(DEFAULT_CSV_OUTPUT_PATH)
+                ? new File(DEFAULT_HISTORY_OUTPUT_PATH)
                 : new File(configuredPath);
 
         if (!directory.exists()) {
@@ -385,18 +428,18 @@ public class AlertListener implements
         return directory;
     }
 
-    private File getCsvOutputFile(String alias) {
-        return new File(getCsvOutputDirectory(), "history_alertlistener_" + sanitize(alias) + ".csv");
+    private File getHistoryOutputFile(String alias) {
+        return new File(getHistoryOutputDirectory(), "history_alertlistener_" + sanitize(alias) + ".jsonl");
     }
 
-    private int migrateCsvOutputFiles(File sourceDirectory, File targetDirectory) {
+    private int migrateHistoryOutputFiles(File sourceDirectory, File targetDirectory) {
         if (sourceDirectory == null || targetDirectory == null || sourceDirectory.equals(targetDirectory) || !sourceDirectory.exists()) {
             return 0;
         }
 
         File[] filesToMove = sourceDirectory.listFiles((dir, name) ->
                 (name.startsWith("AlertListener_") || name.startsWith("history_alertlistener_"))
-                        && (name.endsWith(".csv") || name.endsWith(".log")));
+                        && (name.endsWith(".csv") || name.endsWith(".jsonl") || name.endsWith(".log")));
         if (filesToMove == null || filesToMove.length == 0) {
             return 0;
         }
@@ -419,8 +462,8 @@ public class AlertListener implements
         return movedCount;
     }
 
-    private void openCsvOutputDirectory(String alias) {
-        File directory = getCsvOutputDirectory();
+    private void openHistoryOutputDirectory(String alias) {
+        File directory = getHistoryOutputDirectory();
         try {
             if (!Desktop.isDesktopSupported()) {
                 logToUI(alias, "ERROR: Desktop integration is not supported on this machine.");
@@ -429,7 +472,7 @@ public class AlertListener implements
 
             Desktop.getDesktop().open(directory);
         } catch (IOException e) {
-            logToUI(alias, "ERROR: Failed to open CSV folder: " + e.getMessage());
+            logToUI(alias, "ERROR: Failed to open history folder: " + e.getMessage());
         }
     }
 
@@ -465,28 +508,50 @@ public class AlertListener implements
 
     private void sendContractEvent(String event, String instrument, String timestamp, Map<String, Object> payload,
             Map<String, Object> sourceMeta) {
+        Map<String, Object> envelope = buildEventEnvelope(event, instrument, timestamp, payload, sourceMeta);
+
         synchronized (socketLock) {
             if (socketWriter == null) {
                 droppedEventsTotal++;
                 return;
             }
 
-            Map<String, Object> envelope = new LinkedHashMap<>();
-            envelope.put("schema", EVENT_CONTRACT_SCHEMA);
-            envelope.put("source", EVENT_SOURCE);
-            envelope.put("source_instance", EVENT_SOURCE_INSTANCE);
-            envelope.put("event", event);
-            envelope.put("event_id", buildEventId(event, instrument, timestamp));
-            envelope.put("instrument", instrument);
-            envelope.put("timestamp", timestamp);
-            envelope.put("payload", payload);
-            envelope.put("source_meta", sourceMeta);
-
             socketWriter.println(toJson(envelope));
             if (socketWriter.checkError()) {
                 recordDroppedEvent();
             }
         }
+    }
+
+    private Map<String, Object> buildEventEnvelope(String event, String instrument, String timestamp,
+            Map<String, Object> payload, Map<String, Object> sourceMeta) {
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("schema", EVENT_CONTRACT_SCHEMA);
+        envelope.put("source", EVENT_SOURCE);
+        envelope.put("source_instance", EVENT_SOURCE_INSTANCE);
+        envelope.put("event", event);
+        envelope.put("event_id", buildEventId(event, instrument, timestamp));
+        envelope.put("instrument", instrument);
+        envelope.put("timestamp", timestamp);
+        envelope.put("payload", payload == null ? Collections.emptyMap() : new LinkedHashMap<>(payload));
+        envelope.put("source_meta", sourceMeta == null ? Collections.emptyMap() : new LinkedHashMap<>(sourceMeta));
+        return envelope;
+    }
+
+    static Map<String, Object> buildHistoryRecord(Map<String, Object> envelope, long sequence) {
+        Map<String, Object> record = new LinkedHashMap<>();
+        record.put("schema", HISTORY_FILE_SCHEMA);
+        record.put("source_event_schema", envelope.get("schema"));
+        record.put("source", envelope.get("source"));
+        record.put("source_instance", envelope.get("source_instance"));
+        record.put("event", envelope.get("event"));
+        record.put("event_id", envelope.get("event_id"));
+        record.put("instrument", envelope.get("instrument"));
+        record.put("timestamp", envelope.get("timestamp"));
+        record.put("sequence", sequence);
+        record.put("payload", envelope.get("payload"));
+        record.put("source_meta", envelope.get("source_meta"));
+        return record;
     }
 
     private boolean sendConnectionHello(long helloReconnectCount) {
@@ -811,6 +876,17 @@ public class AlertListener implements
         }
     }
 
+    static void appendJsonLine(File file, String jsonLine) throws IOException {
+        File parent = file.getParentFile();
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs();
+        }
+
+        try (PrintWriter out = new PrintWriter(new BufferedWriter(new FileWriter(file, true)))) {
+            out.println(jsonLine);
+        }
+    }
+
     private static String csvEscape(String value) {
         String safe = nonNull(value);
         boolean needsQuotes = safe.contains(",") || safe.contains("\"") || safe.contains("\n") || safe.contains("\r");
@@ -1026,7 +1102,8 @@ public class AlertListener implements
     }
 
     private void processFlush(AggregatedTrade trade) {
-        logCsvRow(trade.alias, createDotCsvRow(currentTimestamp(), trade));
+        String timestamp = currentTimestamp();
+        logCsvRow(trade.alias, createDotCsvRow(timestamp, trade));
     }
 
     private void sendDotEvent(String alias, boolean isBuy, double price, int size) {
@@ -1106,11 +1183,29 @@ public class AlertListener implements
         payload.put("text", text);
         payload.put("count", count);
         payload.put("popup", popup);
+        payload.put("parsed", buildParsedAlertPayload(time, symbol, text, popup));
 
         Map<String, Object> sourceMeta = new LinkedHashMap<>();
         sourceMeta.put("symbol", symbol);
 
         sendContractEvent("alert", symbol, time, payload, sourceMeta);
+    }
+
+    private Map<String, Object> buildParsedAlertPayload(String timestamp, String alias, String text, boolean popup) {
+        CsvLogRow parsedRow = parseAlertCsvRow(timestamp, alias, text, popup);
+
+        Map<String, Object> parsedPayload = new LinkedHashMap<>();
+        parsedPayload.put("type", parsedRow.type);
+        parsedPayload.put("side", parsedRow.side);
+        parsedPayload.put("price", parsedRow.price);
+        parsedPayload.put("value", parsedRow.value);
+        parsedPayload.put("price_min", parsedRow.priceMin);
+        parsedPayload.put("price_max", parsedRow.priceMax);
+        parsedPayload.put("bid_size", parsedRow.bidSize);
+        parsedPayload.put("ask_size", parsedRow.askSize);
+        parsedPayload.put("duration_sec", parsedRow.durationSec);
+        parsedPayload.put("raw_text", parsedRow.rawText);
+        return parsedPayload;
     }
 
     @Override
@@ -1239,10 +1334,10 @@ public class AlertListener implements
         gbc.insets = new Insets(5, 2, 5, 2);
         topPanel.add(filterArea, gbc);
 
-        // Row 3: CSV Output Path
+        // Row 3: History Output Path
         JPanel csvPathPanel = new JPanel(new BorderLayout(0, 2));
-        csvPathPanel.add(new JLabel("CSV Path:"), BorderLayout.NORTH);
-        JTextField csvOutputPathField = new JTextField(csvOutputPath, 18);
+        csvPathPanel.add(new JLabel("History Path:"), BorderLayout.NORTH);
+        JTextField csvOutputPathField = new JTextField(historyOutputPath, 18);
         csvPathPanel.add(csvOutputPathField, BorderLayout.CENTER);
 
         gbc.gridy = 3;
@@ -1254,22 +1349,22 @@ public class AlertListener implements
         applyBtn.setMargin(new Insets(2, 10, 2, 10));
         applyBtn.addActionListener(e -> {
             try {
-                File previousOutputDirectory = getCsvOutputDirectory();
+                File previousOutputDirectory = getHistoryOutputDirectory();
                 settings.minDotVol = Integer.parseInt(dotVolField.getText().trim());
                 settings.minWallSizeAdded = Integer.parseInt(wallAddedField.getText().trim());
                 settings.minWallSizeRemoved = Integer.parseInt(wallRemovedField.getText().trim());
                 settings.minWallDur = Integer.parseInt(wallDurField.getText().trim());
                 settings.aggWindowMs = Integer.parseInt(aggWinField.getText().trim());
                 settings.maxAggMs = Integer.parseInt(maxAggField.getText().trim());
-                csvOutputPath = csvOutputPathField.getText().trim();
-                File currentOutputDirectory = getCsvOutputDirectory();
-                int migratedFiles = migrateCsvOutputFiles(previousOutputDirectory, currentOutputDirectory);
+                historyOutputPath = csvOutputPathField.getText().trim();
+                File currentOutputDirectory = getHistoryOutputDirectory();
+                int migratedFiles = migrateHistoryOutputFiles(previousOutputDirectory, currentOutputDirectory);
                 saveConfig();
                 logToUI(indicatorName,
                         "SYSTEM: Filters saved for " + indicatorName + ". Dot:" + settings.minDotVol + " Added:"
                                 + settings.minWallSizeAdded + " Removed:" + settings.minWallSizeRemoved + " Dur:"
                                 + settings.minWallDur + "s Agg:" + settings.aggWindowMs + "ms MaxDur:"
-                                + settings.maxAggMs + "ms CSV Path:" + currentOutputDirectory.getAbsolutePath()
+                                + settings.maxAggMs + "ms History Path:" + currentOutputDirectory.getAbsolutePath()
                                 + " Migrated:" + migratedFiles);
             } catch (NumberFormatException ex) {
                 logToUI(indicatorName, "ERROR: Invalid filter values for " + indicatorName + ". Please enter numbers.");
@@ -1311,12 +1406,12 @@ public class AlertListener implements
                     currentLogs.clear();
                 }
             }
-            setAreaToHeader(areaForThisTab);
+            clearArea(areaForThisTab);
 
         });
 
         JButton openFolderButton = new JButton("Open Folder");
-        openFolderButton.addActionListener(e -> openCsvOutputDirectory(indicatorName));
+        openFolderButton.addActionListener(e -> openHistoryOutputDirectory(indicatorName));
 
         bottomPanel.add(clearButton);
         bottomPanel.add(openFolderButton);
@@ -1353,7 +1448,9 @@ public class AlertListener implements
                     settingsMap.put(alias, s);
                 }
 
-                csvOutputPath = prop.getProperty("global.csvOutputPath", DEFAULT_CSV_OUTPUT_PATH);
+                historyOutputPath = prop.getProperty(
+                        "global.historyOutputPath",
+                        prop.getProperty("global.csvOutputPath", DEFAULT_HISTORY_OUTPUT_PATH));
 
                 System.out.println("Config loaded for " + settingsMap.size() + " instruments.");
             } catch (IOException | NumberFormatException ex) {
@@ -1375,7 +1472,7 @@ public class AlertListener implements
                 prop.setProperty(alias + ".aggWindowMs", String.valueOf(s.aggWindowMs));
                 prop.setProperty(alias + ".maxAggMs", String.valueOf(s.maxAggMs));
             }
-            prop.setProperty("global.csvOutputPath", getCsvOutputDirectory().getAbsolutePath());
+            prop.setProperty("global.historyOutputPath", getHistoryOutputDirectory().getAbsolutePath());
             prop.store(output, null);
         } catch (IOException io) {
             System.err.println("Error saving config: " + io.getMessage());
@@ -1383,7 +1480,7 @@ public class AlertListener implements
     }
 
     private void loadLogHistory(String alias, JTextArea area) {
-        setAreaToHeader(area);
+        clearArea(area);
     }
 
     private void loadLines(File file, JTextArea area) {
@@ -1406,8 +1503,8 @@ public class AlertListener implements
         }
     }
 
-    private void setAreaToHeader(JTextArea area) {
-        area.setText(csvHeader() + "\n");
+    private void clearArea(JTextArea area) {
+        area.setText("");
     }
 
     @Override

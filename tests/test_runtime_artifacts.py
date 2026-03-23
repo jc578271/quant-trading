@@ -5,21 +5,21 @@ from pathlib import Path
 
 from order_simulator import OrderSimulator
 from runtime_paths import (
-    ALERT_HISTORY_HEADERS,
+    ALERT_HISTORY_KEYS,
     MODEL_FILE_NAME,
     ORDER_FLOW_HISTORY_FILE_NAME,
-    ORDER_FLOW_HISTORY_HEADERS,
+    ORDER_FLOW_HISTORY_KEYS,
     QUARANTINE_EVENT_KEYS,
     QUARANTINE_EVENTS_FILE_NAME,
     SOCKET_EVENT_KEYS,
     SOCKET_EVENTS_FILE_NAME,
     STATUS_FILE_NAME,
     TRADE_HISTORY_FILE_NAME,
-    TRADE_HISTORY_HEADERS,
+    TRADE_HISTORY_KEYS,
     VOLUME_PROFILE_HISTORY_FILE_NAME,
-    VOLUME_PROFILE_HISTORY_HEADERS,
+    VOLUME_PROFILE_HISTORY_KEYS,
     WYCKOFF_STATE_HISTORY_FILE_NAME,
-    WYCKOFF_STATE_HISTORY_HEADERS,
+    WYCKOFF_STATE_HISTORY_KEYS,
     alert_history_file,
     event_history_file,
     logs_root,
@@ -48,13 +48,13 @@ def test_event_history_file_names_are_exact():
     assert event_history_file("orderflow").name == ORDER_FLOW_HISTORY_FILE_NAME
     assert event_history_file("volumeprofile").name == VOLUME_PROFILE_HISTORY_FILE_NAME
     assert event_history_file("wyckoff_state").name == WYCKOFF_STATE_HISTORY_FILE_NAME
-    assert alert_history_file("GCJ6.COMEX_RITHMIC").name == "history_alertlistener_GCJ6.COMEX_RITHMIC.csv"
+    assert alert_history_file("GCJ6.COMEX_RITHMIC").name == "history_alertlistener_GCJ6.COMEX_RITHMIC.jsonl"
 
 
 def test_order_simulator_defaults_to_runtime_trade_history():
     simulator = OrderSimulator()
 
-    assert Path(simulator.csv_path).as_posix().endswith("logs/trade_history.csv")
+    assert Path(simulator.csv_path).as_posix().endswith("logs/trade_history.jsonl")
     assert Path(simulator.csv_path).name == TRADE_HISTORY_FILE_NAME
 
 
@@ -122,24 +122,73 @@ def test_quarantine_events_jsonl_schema_is_exact(runtime_root):
     assert list(record.keys()) == list(QUARANTINE_EVENT_KEYS)
 
 
-def test_history_csv_headers_are_exact():
-    assert ",".join(ORDER_FLOW_HISTORY_HEADERS) == (
-        "timestamp,instrument,symbol,source,source_instance,event,deltaRank,"
-        "volumesRank,volumesRankUp,volumesRankDown,spread"
+def test_history_contracts_are_exact():
+    assert ORDER_FLOW_HISTORY_KEYS == (
+        "schema",
+        "source_event_schema",
+        "source",
+        "source_instance",
+        "event",
+        "event_id",
+        "instrument",
+        "timeframe",
+        "timestamp",
+        "bar_closed",
+        "bar",
+        "summary",
+        "levels",
+        "source_meta",
     )
-    assert ",".join(VOLUME_PROFILE_HISTORY_HEADERS) == (
-        "timestamp,instrument,symbol,source,source_instance,event,profile_type,vpPOC,vpVAH,vpVAL,spread"
+    assert VOLUME_PROFILE_HISTORY_KEYS == (
+        "schema",
+        "source_event_schema",
+        "source",
+        "source_instance",
+        "event",
+        "event_id",
+        "instrument",
+        "timeframe",
+        "timestamp",
+        "profile_type",
+        "bar_closed",
+        "bar",
+        "summary",
+        "levels",
+        "source_meta",
     )
-    assert ",".join(WYCKOFF_STATE_HISTORY_HEADERS) == (
-        "timestamp,instrument,symbol,source,source_instance,event,wyckoffVolume,wyckoffTime,zigZag,"
-        "waveVolume,wavePrice,waveVolPrice,waveDirection,spread"
+    assert WYCKOFF_STATE_HISTORY_KEYS == (
+        "schema",
+        "source_event_schema",
+        "source",
+        "source_instance",
+        "event",
+        "event_id",
+        "instrument",
+        "timeframe",
+        "timestamp",
+        "bar_closed",
+        "bar",
+        "wyckoff",
+        "wave",
+        "summary",
+        "source_meta",
     )
-    assert ",".join(ALERT_HISTORY_HEADERS) == (
-        "Timestamp,AlertNumber,Symbol,AlertName,Value,Price,Popup,RawText"
+    assert ALERT_HISTORY_KEYS == (
+        "schema",
+        "source_event_schema",
+        "source",
+        "source_instance",
+        "event",
+        "event_id",
+        "instrument",
+        "timestamp",
+        "sequence",
+        "payload",
+        "source_meta",
     )
 
 
-def test_trade_history_headers_are_exact(runtime_root):
+def test_trade_history_contract_is_exact(runtime_root):
     csv_path = runtime_root / TRADE_HISTORY_FILE_NAME
     simulator = OrderSimulator({"trade_log": str(csv_path)})
     simulator._log_trade_csv(
@@ -161,5 +210,5 @@ def test_trade_history_headers_are_exact(runtime_root):
         }
     )
 
-    header_line = csv_path.read_text(encoding="utf-8").splitlines()[0]
-    assert header_line == ",".join(TRADE_HISTORY_HEADERS)
+    record = json.loads(csv_path.read_text(encoding="utf-8").splitlines()[0])
+    assert list(record.keys()) == list(TRADE_HISTORY_KEYS)

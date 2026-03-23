@@ -275,9 +275,9 @@ namespace cAlgo
                 ConnectSocket();
                 _isManualCsvExportInProgress = true;
 
-                Print("Starting Weis Wave & Wyckoff Export...");
+                Print("Starting Weis Wave & Wyckoff History Export...");
                 ClearAndRecalculate();
-                Print("Weis Wave & Wyckoff Export Finished.");
+                Print("Weis Wave & Wyckoff History Export Finished.");
             }
             catch (Exception ex)
             {
@@ -541,7 +541,7 @@ namespace cAlgo
             return BuildContractEnvelope(index, payload, sourceMeta);
         }
 
-        private void AppendDirectCsv(Dictionary<string, object> exportData)
+        private void AppendDirectHistoryJsonl(Dictionary<string, object> exportData)
         {
             if (!_isManualCsvExportInProgress)
                 return;
@@ -550,40 +550,110 @@ namespace cAlgo
             Directory.CreateDirectory(outputFolder);
 
             string symbol = ResolveExportSymbol(exportData);
-            string filePath = Path.Combine(outputFolder, $"history_wyckoff_{symbol}.csv");
-            bool writeHeader = !File.Exists(filePath) || new FileInfo(filePath).Length == 0;
+            string filePath = Path.Combine(outputFolder, $"history_wyckoff_{symbol}.jsonl");
+            Dictionary<string, object> historyRecord = BuildHistoryExportRecord(exportData);
 
             using (StreamWriter writer = new StreamWriter(filePath, true, Utf8NoBom))
             {
-                if (writeHeader)
-                    writer.WriteLine(string.Join(",", ExportCsvHeaders));
-
-                string[] rowValues = new string[ExportCsvHeaders.Length];
-
-                for (int i = 0; i < ExportCsvHeaders.Length; i++)
-                {
-                    string key = ExportCsvHeaders[i];
-                    object value = ResolveExportValue(exportData, key);
-                    rowValues[i] = EscapeCsvValue(ConvertExportValue(value));
-                }
-
-                writer.WriteLine(string.Join(",", rowValues));
+                writer.WriteLine(JsonSerializer.Serialize(historyRecord));
             }
         }
 
-        private string ConvertExportValue(object value)
+        private Dictionary<string, object> BuildHistoryExportRecord(Dictionary<string, object> exportData)
         {
-            if (value == null)
-                return string.Empty;
+            var payload = exportData["payload"] as Dictionary<string, object>;
+            var sourceMeta = exportData["source_meta"] as Dictionary<string, object>;
+            if (payload == null || sourceMeta == null)
+                throw new InvalidOperationException("History export requires payload and source_meta.");
 
-            if (value is string stringValue)
-                return stringValue;
+            double openPrice = ReadNumericValue(payload, "open");
+            double highPrice = ReadNumericValue(payload, "high");
+            double lowPrice = ReadNumericValue(payload, "low");
+            double closePrice = ReadNumericValue(payload, "close");
+            double wyckoffVolume = ReadNumericValue(payload, "wyckoffVolume");
+            double wyckoffTime = ReadNumericValue(payload, "wyckoffTime");
+            double zigZag = ReadNumericValue(payload, "zigZag");
+            double waveVolume = ReadNumericValue(payload, "waveVolume");
+            double wavePrice = ReadNumericValue(payload, "wavePrice");
+            double waveVolPrice = ReadNumericValue(payload, "waveVolPrice");
+            double spread = ReadNumericValue(payload, "spread");
+            double tickSize = Symbol.TickSize > 0 ? Symbol.TickSize : (Symbol.PipSize > 0 ? Symbol.PipSize : 1.0);
+            string waveDirection = payload.TryGetValue("waveDirection", out object directionValue)
+                ? Convert.ToString(directionValue, CultureInfo.InvariantCulture) ?? string.Empty
+                : string.Empty;
 
-            Type valueType = value.GetType();
-            if (valueType.IsArray || (value is System.Collections.IEnumerable && !(value is string)))
-                return JsonSerializer.Serialize(value);
+            Dictionary<string, object> historyRecord = new Dictionary<string, object>
+            {
+                ["schema"] = HistoryFileSchema,
+                ["source_event_schema"] = ResolveExportValue(exportData, "schema") ?? EventContractSchema,
+                ["source"] = ResolveExportValue(exportData, "source") ?? EventSource,
+                ["source_instance"] = ResolveExportValue(exportData, "source_instance") ?? SourceInstanceName,
+                ["event"] = ResolveExportValue(exportData, "event") ?? ExportEventName,
+                ["event_id"] = ResolveExportValue(exportData, "event_id") ?? string.Empty,
+                ["instrument"] = ResolveExportValue(exportData, "instrument") ?? Symbol.Name,
+                ["timeframe"] = ResolveExportValue(exportData, "timeframe") ?? Chart.TimeFrame.ShortName,
+                ["timestamp"] = ResolveExportValue(exportData, "timestamp") ?? Bars.OpenTimes.LastValue.ToString("o"),
+                ["bar_closed"] = true,
+                ["bar"] = new Dictionary<string, object>
+                {
+                    ["open"] = openPrice,
+                    ["high"] = highPrice,
+                    ["low"] = lowPrice,
+                    ["close"] = closePrice,
+                    ["spread"] = spread,
+                    ["tick_size"] = tickSize,
+                    ["range_ticks"] = tickSize > 0 ? Math.Round((highPrice - lowPrice) / tickSize, 4) : 0
+                },
+                ["wyckoff"] = new Dictionary<string, object>
+                {
+                    ["volume"] = wyckoffVolume,
+                    ["time"] = wyckoffTime,
+                    ["zig_zag"] = zigZag
+                },
+                ["wave"] = new Dictionary<string, object>
+                {
+                    ["volume"] = waveVolume,
+                    ["price"] = wavePrice,
+                    ["vol_price"] = waveVolPrice,
+                    ["direction"] = waveDirection,
+                    ["direction_sign"] = ResolveWaveDirectionSign(waveDirection)
+                },
+                ["summary"] = new Dictionary<string, object>
+                {
+                    ["body_ticks"] = tickSize > 0 ? Math.Round((closePrice - openPrice) / tickSize, 4) : 0,
+                    ["close_to_zigzag_ticks"] = tickSize > 0 ? Math.Round((closePrice - zigZag) / tickSize, 4) : 0,
+                    ["wave_price_to_close_ticks"] = tickSize > 0 ? Math.Round((wavePrice - closePrice) / tickSize, 4) : 0,
+                    ["volume_per_time"] = wyckoffTime != 0 ? Math.Round(wyckoffVolume / wyckoffTime, 8) : 0,
+                    ["wave_efficiency"] = wavePrice != 0 ? Math.Round(waveVolPrice / wavePrice, 8) : 0
+                },
+                ["source_meta"] = new Dictionary<string, object>(sourceMeta)
+            };
 
-            return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+            return historyRecord;
+        }
+
+        private double ReadNumericValue(Dictionary<string, object> payload, string key)
+        {
+            if (!payload.TryGetValue(key, out object value) || value == null)
+                return 0;
+
+            try
+            {
+                return Convert.ToDouble(value, CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private int ResolveWaveDirectionSign(string waveDirection)
+        {
+            if (string.Equals(waveDirection, "Up", StringComparison.OrdinalIgnoreCase))
+                return 1;
+            if (string.Equals(waveDirection, "Down", StringComparison.OrdinalIgnoreCase))
+                return -1;
+            return 0;
         }
 
         private object ResolveExportValue(Dictionary<string, object> exportData, string key)
@@ -638,18 +708,6 @@ namespace cAlgo
             return builder.ToString();
         }
 
-        private string EscapeCsvValue(string value)
-        {
-            if (value == null)
-                return string.Empty;
-
-            bool mustQuote = value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r');
-            if (!mustQuote)
-                return value;
-
-            return "\"" + value.Replace("\"", "\"\"") + "\"";
-        }
-
         private void ExportCsvData(int index)
         {
             double vol = double.IsNaN(VolumeSeries[index]) ? 0 : VolumeSeries[index];
@@ -657,11 +715,11 @@ namespace cAlgo
             try
             {
                 Dictionary<string, object> exportData = BuildExportPayload(index, vol);
-                AppendDirectCsv(exportData);
+                AppendDirectHistoryJsonl(exportData);
             }
             catch (Exception ex)
             {
-                Print("CSV Export Error: " + ex.Message);
+                Print("History Export Error: " + ex.Message);
             }
         }
 

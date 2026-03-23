@@ -10,67 +10,78 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 STATUS_FILE_NAME = "status.json"
 SOCKET_EVENTS_FILE_NAME = "socket_events.jsonl"
 QUARANTINE_EVENTS_FILE_NAME = "quarantine_events.jsonl"
-ORDER_FLOW_HISTORY_FILE_NAME = "history_order_flow_aggregated.csv"
-VOLUME_PROFILE_HISTORY_FILE_NAME = "history_volume_profile.csv"
-WYCKOFF_STATE_HISTORY_FILE_NAME = "history_wyckoff_state.csv"
-TRADE_HISTORY_FILE_NAME = "trade_history.csv"
+ORDER_FLOW_HISTORY_FILE_NAME = "history_orderflowaggregated.jsonl"
+VOLUME_PROFILE_HISTORY_FILE_NAME = "history_volumeprofile.jsonl"
+WYCKOFF_STATE_HISTORY_FILE_NAME = "history_wyckoff.jsonl"
+TRADE_HISTORY_FILE_NAME = "trade_history.jsonl"
 MODEL_FILE_NAME = "model.pkl"
 
 SOCKET_EVENT_KEYS = ("received_at", "client", "raw", "normalized")
 QUARANTINE_EVENT_KEYS = ("received_at", "reason", "raw")
-ORDER_FLOW_HISTORY_HEADERS = (
-    "timestamp",
-    "instrument",
-    "symbol",
+ORDER_FLOW_HISTORY_KEYS = (
+    "schema",
+    "source_event_schema",
     "source",
     "source_instance",
     "event",
-    "deltaRank",
-    "volumesRank",
-    "volumesRankUp",
-    "volumesRankDown",
-    "spread",
+    "event_id",
+    "instrument",
+    "timeframe",
+    "timestamp",
+    "bar_closed",
+    "bar",
+    "summary",
+    "levels",
+    "source_meta",
 )
-VOLUME_PROFILE_HISTORY_HEADERS = (
-    "timestamp",
-    "instrument",
-    "symbol",
+VOLUME_PROFILE_HISTORY_KEYS = (
+    "schema",
+    "source_event_schema",
     "source",
     "source_instance",
     "event",
+    "event_id",
+    "instrument",
+    "timeframe",
+    "timestamp",
     "profile_type",
-    "vpPOC",
-    "vpVAH",
-    "vpVAL",
-    "spread",
+    "bar_closed",
+    "bar",
+    "summary",
+    "levels",
+    "source_meta",
 )
-WYCKOFF_STATE_HISTORY_HEADERS = (
-    "timestamp",
-    "instrument",
-    "symbol",
+WYCKOFF_STATE_HISTORY_KEYS = (
+    "schema",
+    "source_event_schema",
     "source",
     "source_instance",
     "event",
-    "wyckoffVolume",
-    "wyckoffTime",
-    "zigZag",
-    "waveVolume",
-    "wavePrice",
-    "waveVolPrice",
-    "waveDirection",
-    "spread",
+    "event_id",
+    "instrument",
+    "timeframe",
+    "timestamp",
+    "bar_closed",
+    "bar",
+    "wyckoff",
+    "wave",
+    "summary",
+    "source_meta",
 )
-ALERT_HISTORY_HEADERS = (
-    "Timestamp",
-    "AlertNumber",
-    "Symbol",
-    "AlertName",
-    "Value",
-    "Price",
-    "Popup",
-    "RawText",
+ALERT_HISTORY_KEYS = (
+    "schema",
+    "source_event_schema",
+    "source",
+    "source_instance",
+    "event",
+    "event_id",
+    "instrument",
+    "timestamp",
+    "sequence",
+    "payload",
+    "source_meta",
 )
-TRADE_HISTORY_HEADERS = (
+TRADE_HISTORY_KEYS = (
     "timestamp",
     "symbol",
     "direction",
@@ -96,14 +107,14 @@ EVENT_HISTORY_FILE_NAMES = {
     "wyckoffstate": WYCKOFF_STATE_HISTORY_FILE_NAME,
     "wyckoff_state": WYCKOFF_STATE_HISTORY_FILE_NAME,
 }
-EVENT_HISTORY_HEADERS = {
-    "orderflow": ORDER_FLOW_HISTORY_HEADERS,
-    "order_flow_aggregated": ORDER_FLOW_HISTORY_HEADERS,
-    "volumeprofile": VOLUME_PROFILE_HISTORY_HEADERS,
-    "volume_profile": VOLUME_PROFILE_HISTORY_HEADERS,
-    "wyckoff": WYCKOFF_STATE_HISTORY_HEADERS,
-    "wyckoffstate": WYCKOFF_STATE_HISTORY_HEADERS,
-    "wyckoff_state": WYCKOFF_STATE_HISTORY_HEADERS,
+EVENT_HISTORY_KEYS = {
+    "orderflow": ORDER_FLOW_HISTORY_KEYS,
+    "order_flow_aggregated": ORDER_FLOW_HISTORY_KEYS,
+    "volumeprofile": VOLUME_PROFILE_HISTORY_KEYS,
+    "volume_profile": VOLUME_PROFILE_HISTORY_KEYS,
+    "wyckoff": WYCKOFF_STATE_HISTORY_KEYS,
+    "wyckoffstate": WYCKOFF_STATE_HISTORY_KEYS,
+    "wyckoff_state": WYCKOFF_STATE_HISTORY_KEYS,
 }
 
 
@@ -145,8 +156,8 @@ def model_file() -> Path:
     return runtime_root() / MODEL_FILE_NAME
 
 
-def event_history_headers(event_name: str) -> tuple[str, ...]:
-    return EVENT_HISTORY_HEADERS.get(_normalize_event_name(event_name), ())
+def event_history_keys(event_name: str) -> tuple[str, ...]:
+    return EVENT_HISTORY_KEYS.get(_normalize_event_name(event_name), ())
 
 
 def event_history_file(event_name: str) -> Path:
@@ -160,7 +171,7 @@ def event_history_file(event_name: str) -> Path:
         for character in normalized_name
         if character.isalnum() or character in {"_", "-"}
     )
-    return logs_root() / f"history_{safe_name}.csv"
+    return logs_root() / f"history_{safe_name}.jsonl"
 
 
 def alert_history_file(alias: str) -> Path:
@@ -168,7 +179,7 @@ def alert_history_file(alias: str) -> Path:
         character if character.isalnum() or character in {".", "-"} else "_"
         for character in alias
     )
-    return logs_root() / f"history_alertlistener_{safe_alias}.csv"
+    return logs_root() / f"history_alertlistener_{safe_alias}.jsonl"
 
 
 def _normalize_event_name(event_name: str) -> str:

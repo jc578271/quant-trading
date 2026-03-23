@@ -85,29 +85,7 @@ namespace cAlgo
         private bool _isManualCsvExportInProgress;
         private const string DefaultCsvOutputFolder = @"D:\projects\quant-trading\logs";
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
-        private static readonly string[] ExportCsvHeaders =
-        {
-            "profile_type",
-            "symbol",
-            "timeframe",
-            "timestamp",
-            "open",
-            "high",
-            "low",
-            "close",
-            "vpPOC",
-            "vpVAH",
-            "vpVAL",
-            "vpTotalVolume",
-            "spread",
-            "price_level",
-            "volume_total",
-            "volume_buy",
-            "volume_sell",
-            "delta",
-            "min_delta",
-            "max_delta"
-        };
+        private const string HistoryFileSchema = "volumeprofile-history/v2";
         private const string EventContractSchema = "event-contract/v1";
         private const string EventSource = "ctrader";
         private const string SourceInstanceName = "FreeVolumeProfileV20";
@@ -134,7 +112,7 @@ namespace cAlgo
             };
         }
 
-        [Parameter("CSV Output Folder", DefaultValue = DefaultCsvOutputFolder, Group = "==== Python AI Export ====")]
+        [Parameter("History Output Folder", DefaultValue = DefaultCsvOutputFolder, Group = "==== Python AI Export ====")]
         public string CsvOutputFolder { get; set; }
 
         public enum PanelAlign_Data

@@ -3,7 +3,7 @@ import os
 from order_simulator import OrderSimulator
 from runtime_paths import (
     event_history_file,
-    event_history_headers,
+    event_history_keys,
     model_file,
 )
 
@@ -108,8 +108,7 @@ class AIAnalyzer:
             raise
 
     def export_individual_csv(self, symbol, data):
-        """Export indicator events to stable runtime CSV files with fixed headers."""
-        import csv
+        """Export indicator events to stable runtime JSONL files with fixed top-level keys."""
         import json
         
         msg_type = data.get("event", data.get("type", "unknown"))
@@ -121,33 +120,26 @@ class AIAnalyzer:
             elif "deltaRank" in data:
                 msg_type = "order_flow_aggregated"
 
-        headers = event_history_headers(msg_type)
-        if not headers:
-            logging.warning(f"Skipping runtime CSV export for unsupported event type: {msg_type}")
+        keys = event_history_keys(msg_type)
+        if not keys:
+            logging.warning(f"Skipping runtime JSONL export for unsupported event type: {msg_type}")
             return
 
         filename = event_history_file(msg_type)
-        
-        row = data.copy()
-        row["symbol"] = symbol
-        
-        # Serialize dicts/lists to JSON strings
-        for k, v in row.items():
-            if isinstance(v, (dict, list)):
-                row[k] = json.dumps(v)
 
-        ordered_row = {header: row.get(header, "") for header in headers}
-        file_exists = filename.is_file() and filename.stat().st_size > 0
+        record = data.copy()
+        if "instrument" not in record:
+            record["instrument"] = symbol
+
+        ordered_record = {key: record.get(key) for key in keys}
         filename.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with open(filename, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=list(headers), extrasaction='ignore')
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerow(ordered_row)
+            with open(filename, "a", encoding="utf-8") as f:
+                f.write(json.dumps(ordered_record, ensure_ascii=False, separators=(",", ":")))
+                f.write("\n")
         except Exception as e:
-            logging.error(f"CSV Export Error for {filename}: {e}")
+            logging.error(f"JSONL Export Error for {filename}: {e}")
 
     def process_data(self, data):
         """

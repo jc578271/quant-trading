@@ -4,7 +4,9 @@ import org.junit.Test;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -203,5 +205,43 @@ public class AlertListenerCsvTest {
         assertEquals("timestamp,alias,type,side,price,value,price_min,price_max,bid_size,ask_size,duration_sec,raw_text", lines.get(0));
         assertEquals(3, lines.size());
         assertEquals(1, lines.stream().filter(AlertListener.csvHeader()::equals).count());
+    }
+
+    @Test
+    public void buildsBookmapHistoryRecordWithExpectedSchema() {
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("schema", "event-contract/v1");
+        envelope.put("source", "bookmap");
+        envelope.put("source_instance", "AlertListener");
+        envelope.put("event", "dom");
+        envelope.put("event_id", "bookmap-dom-ESH6");
+        envelope.put("instrument", "ESH6.CME@RITHMIC");
+        envelope.put("timestamp", TS);
+        envelope.put("payload", Map.of("action", "add", "price", 6775.25, "size", 125));
+        envelope.put("source_meta", Map.of("alias", "ESH6.CME@RITHMIC"));
+
+        Map<String, Object> record = AlertListener.buildHistoryRecord(envelope, 7L);
+
+        assertEquals("bookmap-history/v1", record.get("schema"));
+        assertEquals("event-contract/v1", record.get("source_event_schema"));
+        assertEquals("dom", record.get("event"));
+        assertEquals("ESH6.CME@RITHMIC", record.get("instrument"));
+        assertEquals(7L, record.get("sequence"));
+        assertEquals(envelope.get("payload"), record.get("payload"));
+        assertEquals(envelope.get("source_meta"), record.get("source_meta"));
+    }
+
+    @Test
+    public void appendsJsonLinesWithoutHeader() throws Exception {
+        File file = File.createTempFile("alert-listener-history", ".jsonl");
+        assertTrue(file.delete());
+
+        AlertListener.appendJsonLine(file, "{\"event\":\"dom\"}");
+        AlertListener.appendJsonLine(file, "{\"event\":\"wall\"}");
+
+        List<String> lines = Files.readAllLines(file.toPath());
+        assertEquals(2, lines.size());
+        assertEquals("{\"event\":\"dom\"}", lines.get(0));
+        assertEquals("{\"event\":\"wall\"}", lines.get(1));
     }
 }
