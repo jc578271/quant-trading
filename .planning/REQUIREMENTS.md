@@ -44,6 +44,15 @@
 - **STRAT-01**: Additional strategy modules can plug into the normalized event contract without rewriting transport code
 - **STRAT-02**: The pipeline supports backtesting/benchmarking of signal logic against captured sessions
 
+### Model Training
+
+- [ ] **MLDATA-01**: Raw JSONL logs are cataloged and normalized into a documented deterministic training dataset contract
+- [ ] **MLDATA-02**: Dataset building enforces explicit scope, instrument compatibility, canonical instrument mapping, and backward-only joins
+- [ ] **MLLABEL-01**: Labels are generated from local historical price movement without future leakage
+- [ ] **MLTRAIN-01**: Offline training produces versioned artifacts and metrics from local data only
+- [ ] **MLTRAIN-02**: Promotion into `runtime/model.pkl` is explicit and separate from training
+- [ ] **MLEVAL-01**: Walk-forward evaluation outputs are reproducible enough to replay and compare safely
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -69,6 +78,12 @@
 | EXEC-02 | Phase 4 | Pending |
 | OPS-01 | Phase 5 | Pending |
 | OPS-02 | Phase 5 | Pending |
+| MLDATA-01 | Phase 6 | Pending |
+| MLDATA-02 | Phase 6 | Pending |
+| MLLABEL-01 | Phase 6 | Pending |
+| MLTRAIN-01 | Phase 6 | Pending |
+| MLTRAIN-02 | Phase 6 | Pending |
+| MLEVAL-01 | Phase 6 | Pending |
 
 **Coverage:**
 - v1 requirements: 12 total
@@ -77,4 +92,4 @@
 
 ---
 *Requirements defined: 2026-03-18*
-*Last updated: 2026-03-23 after Phase 2 completion*
+*Last updated: 2026-03-24 after Phase 6 planning*

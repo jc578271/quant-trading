@@ -2,7 +2,7 @@
 
 ## Overview
 
-This roadmap turns the existing trading workspace into a coherent local pipeline in stages: first make the event contract explicit, then harden transport and observability, then stabilize signal state, then add safe execution controls, and finally lock the workflow down with repeatable build/test coverage.
+This roadmap turns the existing trading workspace into a coherent local pipeline in stages: first make the event contract explicit, then harden transport and observability, then stabilize signal state, then add safe execution controls, then lock the workflow down with repeatable build/test coverage, and finally use captured logs to build a trainable local trading model.
 
 ## Phases
 
@@ -15,6 +15,7 @@ This roadmap turns the existing trading workspace into a coherent local pipeline
 - [ ] **Phase 3: Stabilize Signal State** - Turn asynchronous records into explainable per-symbol state
 - [ ] **Phase 4: Add Safe Execution Controls** - Gate live execution behind validated inputs and explicit modes
 - [ ] **Phase 5: Lock In Build & Verification** - Add repeatable build/smoke/regression workflow for the integrated path
+- [ ] **Phase 6: Build and Train AI Trading Model** - Train a local model from Bookmap and cTrader JSONL histories
 
 ## Phase Details
 
@@ -91,10 +92,25 @@ Plans:
 - [ ] 05-01: Create repeatable build/smoke workflow for the integrated pipeline
 - [ ] 05-02: Add regression coverage for contract parsing, state buffering, and execution guards
 
+### Phase 6: Build and Train AI Trading Model
+**Goal**: Build a repeatable local training pipeline that turns captured Bookmap and cTrader JSONL logs into a usable trading model artifact.
+**Depends on**: Phase 5
+**Requirements**: [MLDATA-01, MLDATA-02, MLLABEL-01, MLTRAIN-01, MLTRAIN-02, MLEVAL-01]
+**Success Criteria** (what must be TRUE):
+  1. The relevant JSONL datasets from Bookmap alert listener and cTrader order-flow, volume-profile, and Wyckoff logs are cataloged and normalized for training use
+  2. The workspace can run a documented training workflow that produces a versioned model artifact from those logs
+  3. The trained model's input schema, labels/targets, and evaluation approach are explicit enough to replay and improve safely
+**Plans**: 3 plans
+
+Plans:
+- [ ] 06-01: Lock Phase 6 dataset scope and build the deterministic baseline dataset
+- [ ] 06-02: Train and evaluate the offline baseline model with versioned artifacts
+- [ ] 06-03: Promote compatible artifacts into runtime and harden runtime loading
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -103,3 +119,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 3. Stabilize Signal State | 0/2 | Not started | - |
 | 4. Add Safe Execution Controls | 0/2 | Not started | - |
 | 5. Lock In Build & Verification | 0/2 | Not started | - |
+| 6. Build and Train AI Trading Model | 0/3 | Planned | - |
