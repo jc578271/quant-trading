@@ -1,0 +1,30 @@
+{
+  "train_rows": 31,
+  "validation_rows": 21,
+  "test_rows": 7,
+  "macro_f1": 0.49867374005305043,
+  "balanced_accuracy": 0.5545454545454546,
+  "splits": [
+    {
+      "fold": 1,
+      "train_rows": 10,
+      "test_rows": 7,
+      "max_train_anchor_timestamp": "2026-03-20T16:00:00Z",
+      "min_test_anchor_timestamp": "2026-03-20T17:00:00Z"
+    },
+    {
+      "fold": 2,
+      "train_rows": 17,
+      "test_rows": 7,
+      "max_train_anchor_timestamp": "2026-03-23T00:00:00Z",
+      "min_test_anchor_timestamp": "2026-03-23T01:00:00Z"
+    },
+    {
+      "fold": 3,
+      "train_rows": 24,
+      "test_rows": 7,
+      "max_train_anchor_timestamp": "2026-03-23T07:00:00Z",
+      "min_test_anchor_timestamp": "2026-03-23T08:00:00Z"
+    }
+  ]
+}

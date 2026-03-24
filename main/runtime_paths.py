@@ -15,6 +15,7 @@ VOLUME_PROFILE_HISTORY_FILE_NAME = "history_volumeprofile.jsonl"
 WYCKOFF_STATE_HISTORY_FILE_NAME = "history_wyckoff.jsonl"
 TRADE_HISTORY_FILE_NAME = "trade_history.jsonl"
 MODEL_FILE_NAME = "model.pkl"
+MODEL_MANIFEST_FILE_NAME = "model_manifest.json"
 
 SOCKET_EVENT_KEYS = ("received_at", "client", "raw", "normalized")
 QUARANTINE_EVENT_KEYS = ("received_at", "reason", "raw")
@@ -154,6 +155,10 @@ def trade_history_file() -> Path:
 
 def model_file() -> Path:
     return runtime_root() / MODEL_FILE_NAME
+
+
+def model_manifest_file() -> Path:
+    return runtime_root() / MODEL_MANIFEST_FILE_NAME
 
 
 def event_history_keys(event_name: str) -> tuple[str, ...]:

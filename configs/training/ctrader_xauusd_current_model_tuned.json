@@ -1,0 +1,23 @@
+{
+  "dataset_scope": "ctrader_xauusd_h1_baseline",
+  "label": {
+    "type": "future_return_classification",
+    "horizon_bars": 1,
+    "long_threshold_ticks": 150,
+    "short_threshold_ticks": -150
+  },
+  "evaluation": {
+    "method": "walk_forward",
+    "n_splits": 3
+  },
+  "model": {
+    "type": "random_forest_classifier",
+    "n_estimators": 200,
+    "random_state": 42,
+    "class_weight": "balanced",
+    "max_depth": 4,
+    "min_samples_leaf": 1,
+    "min_samples_split": 3,
+    "max_features": "sqrt"
+  }
+}

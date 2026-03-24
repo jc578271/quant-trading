@@ -13,11 +13,14 @@
   - Do not assume cloud services.
   - Prefer deterministic preprocessing and versioned artifacts.
   - Current Bookmap and cTrader logs are not obviously aligned by instrument or timeframe.
+- Canonical market mappings should be supported when dataset scope is defined explicitly, for example:
+  - `XAUUSD` on cTrader maps to `GC*` contracts on Bookmap
+  - `US500` maps to `ES*` contracts on Bookmap
 - Planner discretion:
   - Dataset contract, join policy, label strategy, artifact layout, and promotion flow.
 - Out of scope for this phase baseline:
   - Cloud training/inference services
-  - Joining unmatched Bookmap and cTrader feeds into one training set
+  - Blindly joining unmatched Bookmap and cTrader feeds without a canonical instrument map
   - Live auto-retraining inside the runtime loop
 </user_constraints>
 
@@ -41,9 +44,9 @@
 
 Phase 6 should be planned as an **offline dataset-and-training pipeline**, not as a change to live startup behavior. Current runtime code still bootstraps a dummy `RandomForestClassifier` inside [`main/ai_analyzer.py`](D:/projects/quant-trading/main/ai_analyzer.py) and loads or writes the runtime artifact at [`runtime/model.pkl`](D:/projects/quant-trading/main/runtime_paths.py). That is acceptable for the existing bridge, but it is the wrong place to build a real training workflow.
 
-The key planning problem is **data scope and alignment**, not model choice. The required files show one Bookmap event stream for `ESM6.CME@RITHMIC` and three cTrader history streams for `XAUUSD`. The cTrader files can support a first local baseline if one series is chosen as the anchor and the others are joined backward in time. The Bookmap file in scope cannot be fused into that baseline because it is a different instrument and different event shape.
+The key planning problem is **data scope and alignment**, not model choice. The required files show one Bookmap event stream for `ESM6.CME@RITHMIC` and three cTrader history streams for `XAUUSD`. The cTrader files can support a first local baseline if one series is chosen as the anchor and the others are joined backward in time. Bookmap should also be allowed into training, but only through an explicit canonical instrument map. Under that policy, `GC*` Bookmap contracts can enrich `XAUUSD`, and `ES*` contracts can enrich `US500`; the current `ESM6` sample still cannot enrich the current `XAUUSD` baseline because it maps to a different canonical market family.
 
-**Primary recommendation:** Plan Phase 6 around a cTrader-first `XAUUSD` baseline dataset, built deterministically from raw `logs/*.jsonl` into versioned parquet artifacts, with 1-bar-ahead horizon labels, walk-forward evaluation, and an explicit promotion step into `runtime/model.pkl`.
+**Primary recommendation:** Plan Phase 6 around a cTrader-anchored baseline dataset that supports optional Bookmap enrichment through a canonical instrument map, built deterministically from raw `logs/*.jsonl` into versioned parquet artifacts, with 1-bar-ahead horizon labels, walk-forward evaluation, and an explicit promotion step into `runtime/model.pkl`.
 
 ## Current Ownership
 
@@ -59,14 +62,14 @@ The key planning problem is **data scope and alignment**, not model choice. The 
 
 | Dataset | Rows | Schema | Shape | Planning Impact |
 |---------|------|--------|-------|-----------------|
-| [`logs/history_alertlistener_ESM6.CME_RITHMIC.jsonl`](D:/projects/quant-trading/logs/history_alertlistener_ESM6.CME_RITHMIC.jsonl) | 1213 | `bookmap-history/v1` | Top-level: `schema, source_event_schema, source, source_instance, event, event_id, instrument, timestamp, sequence, payload, source_meta` | Separate Bookmap event scope only; not trainable with current XAUUSD cTrader set |
+| [`logs/history_alertlistener_ESM6.CME_RITHMIC.jsonl`](D:/projects/quant-trading/logs/history_alertlistener_ESM6.CME_RITHMIC.jsonl) | 1213 | `bookmap-history/v1` | Top-level: `schema, source_event_schema, source, source_instance, event, event_id, instrument, timestamp, sequence, payload, source_meta` | Bookmap event scope that becomes trainable only after canonical market mapping and event-window aggregation |
 | [`logs/history_orderflowaggregated_XAUUSD.jsonl`](D:/projects/quant-trading/logs/history_orderflowaggregated_XAUUSD.jsonl) | 32 | `orderflow-history/v2` | `bar`, `summary`, `levels[]`, `timeframe=h1`, `instrument=XAUUSD` | Best anchor series for a first cTrader baseline |
 | [`logs/history_volumeprofile_XAUUSD.jsonl`](D:/projects/quant-trading/logs/history_volumeprofile_XAUUSD.jsonl) | 21 | `volumeprofile-history/v2` | `profile_type`, `bar`, `summary`, `levels[]`, `timeframe=h1`, `instrument=XAUUSD` | Enrichment series; only 19 exact timestamp overlaps with order flow |
 | [`logs/history_wyckoff_XAUUSD.jsonl`](D:/projects/quant-trading/logs/history_wyckoff_XAUUSD.jsonl) | 1416 | `wyckoff-history/v2` | `bar`, `wyckoff`, `wave`, `summary`, `timeframe=Re50`, `instrument=XAUUSD` | Higher-frequency enrichment series; must be window-aggregated before joining |
 
 ### Incompatibilities That Matter
 
-- **Instrument mismatch:** Bookmap file in scope is `ESM6.CME@RITHMIC`; cTrader files are `XAUUSD`.
+- **Canonical market mismatch:** current Bookmap sample is `ESM6.CME@RITHMIC`, which maps to an `ES/US500` family rather than the current `XAUUSD/GC` family.
 - **Timeframe mismatch:** cTrader order flow and volume profile are `h1`; Wyckoff is `Re50`; Bookmap has no timeframe field.
 - **Shape mismatch:** Bookmap records are event-sequence rows with mostly string payload values; cTrader rows are nested numeric bar records.
 - **Coverage mismatch:** order flow has 32 rows, volume profile 21 rows, and only 19 exact timestamp overlaps with order flow.
@@ -83,8 +86,12 @@ Use one contract for **derived training rows**, separate from raw history contra
 - `join_series`:
   - `volume_profile` H1 via backward exact/as-of join
   - `wyckoff_state` via backward window aggregation up to the anchor timestamp
-- `excluded_from_baseline`:
-  - `history_alertlistener_ESM6.CME_RITHMIC.jsonl`
+  - `bookmap_alertlistener` via backward event-window aggregation after canonical mapping
+- `canonical_instrument_map`:
+  - `XAUUSD` -> Bookmap root `GC`
+  - `US500` -> Bookmap root `ES`
+- `excluded_from_current_xauusd_sample`:
+  - `history_alertlistener_ESM6.CME_RITHMIC.jsonl` because it maps to `ES/US500`, not `XAUUSD/GC`
 
 ### Training Row Fields
 
@@ -96,6 +103,7 @@ Use one contract for **derived training rows**, separate from raw history contra
 | Order Flow Features | `level_count`, `total_volume`, `buy_volume`, `sell_volume`, `delta_sum`, `abs_delta_sum`, `poc_price`, `poc_distance_to_close_ticks`, plus fixed `levels[]` aggregates |
 | Volume Profile Features | `profile_type`, `vp_poc`, `vp_vah`, `vp_val`, `vp_total_volume`, `vp_value_area_width_ticks`, `vp_poc_to_close_ticks` |
 | Wyckoff Features | `wy_count`, `wy_last_direction_sign`, `wy_last_wave_volume`, `wy_sum_wave_volume`, `wy_mean_volume_per_time`, `wy_max_wave_efficiency`, `wy_last_close_to_zigzag_ticks` |
+| Bookmap Features | `has_bookmap_window`, `bookmap_event_count_300s`, `bookmap_dot_count_300s`, `bookmap_stop_count_300s`, `bookmap_wall_count_300s`, `bookmap_signed_value_300s` |
 | Missingness Flags | `has_volume_profile`, `has_wyckoff_window`, `quarantined_source_count` |
 | Labels | `future_return_ticks_1`, `target_class_1`, `label_horizon_bars`, `label_threshold_ticks` |
 
@@ -137,9 +145,10 @@ artifacts/
    - Add `main/training/` for dataset build, feature build, training, and promotion commands.
    - Do not train inside `AIAnalyzer`.
 
-2. **cTrader-first promoted model**
+2. **cTrader-anchored, Bookmap-enriched promoted model**
    - First promoted model scope is `ctrader_xauusd_h1_baseline`.
-   - Treat current Bookmap file as a separate cataloged scope and schema fixture set.
+   - Allow Bookmap enrichment only when a Bookmap alias maps into the same canonical market family as the cTrader anchor, for example `XAUUSD -> GC*` and `US500 -> ES*`.
+   - Treat unmatched Bookmap captures as cataloged-but-unjoined rather than silently merged.
 
 3. **Deterministic preprocessing**
    - Input: immutable `logs/*.jsonl`
@@ -198,7 +207,7 @@ artifacts/
 
 ## Common Pitfalls
 
-- **False fusion of Bookmap and cTrader data:** same folder does not mean same market scope.
+- **False fusion of Bookmap and cTrader data:** same folder does not mean same market scope, and same timestamp does not mean same canonical market family.
 - **Future leakage through joins:** all enrichment joins must be backward-only relative to the anchor timestamp.
 - **Variable-length `levels[]` features:** convert them to fixed aggregates before modeling.
 - **Training writing to runtime:** only promotion may touch `runtime/model.pkl`.
@@ -206,8 +215,8 @@ artifacts/
 
 ## Open Questions
 
-1. **Should Phase 6 stop at a cTrader-only baseline, or also define a future aligned Bookmap capture contract?**
-   - Recommendation: baseline now, aligned-capture contract only if the planner wants an extra slice.
+1. **Should Phase 6 stop at a cTrader-only baseline, or also define canonical Bookmap mappings now?**
+   - Recommendation: define the canonical mappings now and implement optional Bookmap enrichment immediately, while keeping unmatched captures excluded from the current sample.
 
 2. **Should volume-profile gaps drop anchor rows or survive via missingness flags?**
    - Recommendation: keep rows, set `has_volume_profile = false`, and record the join miss in the manifest.

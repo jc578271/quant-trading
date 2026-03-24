@@ -1,0 +1,27 @@
+{
+  "dataset_scope": "ctrader_xauusd_h1_baseline",
+  "feature_order": [
+    "level_count",
+    "total_volume",
+    "buy_volume",
+    "sell_volume",
+    "delta_sum",
+    "abs_delta_sum",
+    "poc_price",
+    "poc_distance_to_close_ticks",
+    "wy_count",
+    "wy_last_direction_sign",
+    "wy_last_wave_volume",
+    "wy_sum_wave_volume",
+    "wy_mean_volume_per_time",
+    "wy_max_wave_efficiency",
+    "has_volume_profile",
+    "has_wyckoff_window",
+    "has_bookmap_window",
+    "bookmap_event_count_300s",
+    "bookmap_dot_count_300s",
+    "bookmap_stop_count_300s",
+    "bookmap_wall_count_300s",
+    "bookmap_signed_value_300s"
+  ]
+}

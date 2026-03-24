@@ -1,0 +1,14 @@
+{
+  "paths": {
+    "orderflow": "logs\\history_orderflowaggregated_XAUUSD.jsonl",
+    "volume_profile": "logs\\history_volumeprofile_XAUUSD.jsonl",
+    "wyckoff": "logs\\history_wyckoff_XAUUSD.jsonl"
+  },
+  "source_counts": {
+    "orderflow_rows": 32,
+    "volume_profile_rows": 21,
+    "wyckoff_rows": 1416,
+    "bookmap_scope_rows": 2594,
+    "bookmap_excluded_rows": 1389
+  }
+}
