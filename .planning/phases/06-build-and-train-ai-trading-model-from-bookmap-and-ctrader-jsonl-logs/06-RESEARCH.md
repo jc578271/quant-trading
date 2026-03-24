@@ -1,446 +1,283 @@
 # Phase 6: Build and Train AI Trading Model - Research
 
 **Researched:** 2026-03-24
-**Domain:** Local offline training pipeline for trading-event JSONL logs
+**Domain:** Local offline training pipeline from existing JSONL logs
 **Confidence:** MEDIUM
 
+<user_constraints>
 ## User Constraints
 
-- No phase-specific `*-CONTEXT.md` exists yet, so there are no locked per-phase decisions to copy verbatim.
-- Locked repo constraints from existing project docs/code:
-  - The system is local-first. Cloud deployment and hosted APIs remain out of scope.
-  - The current runtime expects a loadable model artifact at `runtime/model.pkl`.
-  - Phase 6 must use captured Bookmap and cTrader JSONL logs without breaking current runtime assumptions.
-- Claude's discretion for planning:
-  - Dataset contract, scope boundaries, join policy, label definition, feature engineering approach, train/eval workflow, artifact versioning, and promotion flow.
-- Deferred ideas already out of scope from `REQUIREMENTS.md`:
-  - Cloud deployment or hosted APIs
-  - Multi-broker execution abstraction
-  - Portfolio/risk platform features beyond per-trade controls
+- No Phase 6 `*-CONTEXT.md` exists yet.
+- Locked repo constraints:
+  - Stay local-first and desktop-native.
+  - Do not assume cloud services.
+  - Prefer deterministic preprocessing and versioned artifacts.
+  - Current Bookmap and cTrader logs are not obviously aligned by instrument or timeframe.
+- Planner discretion:
+  - Dataset contract, join policy, label strategy, artifact layout, and promotion flow.
+- Out of scope for this phase baseline:
+  - Cloud training/inference services
+  - Joining unmatched Bookmap and cTrader feeds into one training set
+  - Live auto-retraining inside the runtime loop
+</user_constraints>
 
 <phase_requirements>
 ## Phase Requirements
 
-> `REQUIREMENTS.md` and `ROADMAP.md` do not yet assign official requirement IDs to Phase 6. The table below proposes candidate IDs the planner can use, but traceability is currently a requirement gap.
+`ROADMAP.md` defines Phase 6 but `REQUIREMENTS.md` has no official Phase 6 IDs yet. That is a traceability gap. Use these candidate IDs for planning unless requirements are added first.
 
 | ID | Description | Research Support |
 |----|-------------|-----------------|
-| MLDATA-01 (candidate) | Raw Bookmap and cTrader JSONL logs can be cataloged and normalized into a documented fixed training dataset contract without silent schema loss. | Standard Stack, Architecture Patterns 1-2, Pitfalls 1-3 |
-| MLDATA-02 (candidate) | Dataset building enforces explicit scope and join policy so only same-instrument, time-compatible feeds are merged. | Summary, Architecture Pattern 2, Pitfall 1 |
-| MLTRAIN-01 (candidate) | A documented offline workflow produces a versioned model artifact plus metrics, config, and dataset manifest. | Standard Stack, Architecture Pattern 3, Don't Hand-Roll |
-| MLTRAIN-02 (candidate) | Promotion to `runtime/model.pkl` is explicit and separate from training so runtime behavior remains stable. | Summary, Architecture Pattern 3, Pitfall 4 |
-| MLEVAL-01 (candidate) | Labels, thresholds, walk-forward evaluation, and replay outputs are explicit enough to inspect and improve safely. | Summary, Architecture Pattern 4, Pitfalls 2 and 5 |
-| GAP | Official Phase 6 requirement IDs are missing from `.planning/REQUIREMENTS.md` traceability. | Open Questions, Validation Architecture |
+| MLDATA-01 (candidate) | Raw JSONL logs are cataloged and normalized into a documented, deterministic training dataset contract. | Current Ownership, Actual Log Shapes, Dataset Contract |
+| MLDATA-02 (candidate) | Dataset building enforces explicit scope, instrument compatibility, and join rules before rows are merged. | Summary, Actual Log Shapes, Architecture Decisions |
+| MLLABEL-01 (candidate) | Labels are generated from local historical price movement without future leakage. | Label Strategy, Pitfalls |
+| MLTRAIN-01 (candidate) | Offline training produces versioned artifacts, metrics, and manifests from local data only. | Architecture Decisions, Implementation Slices |
+| MLTRAIN-02 (candidate) | Promotion into `runtime/model.pkl` is explicit and separate from training. | Current Ownership, Architecture Decisions, Validation Architecture |
+| MLEVAL-01 (candidate) | Walk-forward evaluation and prediction outputs are reproducible enough to replay and compare safely. | Label Strategy, Validation Architecture |
+| GAP | Phase 6 has a roadmap entry but no official requirements/traceability row in `.planning/REQUIREMENTS.md`. | This section, Validation Architecture |
 </phase_requirements>
 
 ## Summary
 
-Phase 6 should be planned as an **offline dataset-and-training pipeline**, not as a modification to the live analyzer loop. Current repo evidence shows that the runtime still loads or creates a dummy scikit-learn model in `main/ai_analyzer.py`, while the actual persisted runtime artifact path is `runtime/model.pkl`. Training directly inside `AIAnalyzer` would make results non-reproducible, couple experimentation to live startup, and risk breaking the existing inference path.
+Phase 6 should be planned as an **offline dataset-and-training pipeline**, not as a change to live startup behavior. Current runtime code still bootstraps a dummy `RandomForestClassifier` inside [`main/ai_analyzer.py`](D:/projects/quant-trading/main/ai_analyzer.py) and loads or writes the runtime artifact at [`runtime/model.pkl`](D:/projects/quant-trading/main/runtime_paths.py). That is acceptable for the existing bridge, but it is the wrong place to build a real training workflow.
 
-The largest planning constraint is **data contract and scope alignment**, not model selection. Current logs are schema-misaligned and instrument-misaligned: Bookmap histories are `bookmap-history/v1` event streams for `ESM6.CME@RITHMIC` and `GCJ6.COMEX@RITHMIC`, while cTrader histories are nested v2 histories for `XAUUSD` (`orderflow-history/v2`, `volumeprofile-history/v2`, `wyckoff-history/v2`). The cTrader feeds can be aligned into one XAUUSD dataset scope; the current Bookmap feeds cannot be validly fused with that dataset because there is no shared instrument or overlapping canonical market series. The phase therefore needs an explicit **dataset scope / join policy** before any training work.
+The key planning problem is **data scope and alignment**, not model choice. The required files show one Bookmap event stream for `ESM6.CME@RITHMIC` and three cTrader history streams for `XAUUSD`. The cTrader files can support a first local baseline if one series is chosen as the anchor and the others are joined backward in time. The Bookmap file in scope cannot be fused into that baseline because it is a different instrument and different event shape.
 
-The safest v1 plan is: build a **cTrader-first baseline dataset** for `XAUUSD`, train an offline scikit-learn model with walk-forward time-series evaluation, store versioned artifacts outside `runtime/`, and add an explicit promotion step that copies a blessed artifact into `runtime/model.pkl`. Treat current Bookmap logs as a separate dataset scope and contract-validation fixture set until same-instrument, overlap-capable captures exist.
+**Primary recommendation:** Plan Phase 6 around a cTrader-first `XAUUSD` baseline dataset, built deterministically from raw `logs/*.jsonl` into versioned parquet artifacts, with 1-bar-ahead horizon labels, walk-forward evaluation, and an explicit promotion step into `runtime/model.pkl`.
 
-**Primary recommendation:** Use a cTrader-first, fixed-schema parquet training pipeline with explicit dataset scopes, backward `merge_asof` alignment, horizon-based labels, walk-forward `TimeSeriesSplit` evaluation, and explicit model promotion into `runtime/model.pkl`.
+## Current Ownership
+
+| Component | Current Owner | What It Actually Owns | Confidence |
+|----------|---------------|-----------------------|------------|
+| [`main/ai_analyzer.py`](D:/projects/quant-trading/main/ai_analyzer.py) | Python runtime | Live feature extraction, live inference, and dummy model bootstrap when `runtime/model.pkl` is missing | HIGH |
+| [`main/runtime_paths.py`](D:/projects/quant-trading/main/runtime_paths.py) | Python runtime | Canonical path mapping for `runtime/status.json`, `runtime/model.pkl`, and raw history files under `logs/*.jsonl` | HIGH |
+| [`scripts/convert_alertlistener_history_csv_to_jsonl.py`](D:/projects/quant-trading/scripts/convert_alertlistener_history_csv_to_jsonl.py) | Offline conversion script | Legacy Bookmap CSV to `bookmap-history/v1` JSONL conversion, including `sequence`, `payload`, and `history_mode` | HIGH |
+| [`docs/pipeline-runtime-operations.md`](D:/projects/quant-trading/docs/pipeline-runtime-operations.md) | Documentation | Stale artifact description: it still documents `runtime/*.csv`, while current code/tests use `logs/*.jsonl` histories plus `runtime/model.pkl` | HIGH |
+| Repo overall | No dedicated training package yet | There is no current offline dataset builder, feature builder, trainer, or promotion CLI | HIGH |
+
+## Actual Log Shapes
+
+| Dataset | Rows | Schema | Shape | Planning Impact |
+|---------|------|--------|-------|-----------------|
+| [`logs/history_alertlistener_ESM6.CME_RITHMIC.jsonl`](D:/projects/quant-trading/logs/history_alertlistener_ESM6.CME_RITHMIC.jsonl) | 1213 | `bookmap-history/v1` | Top-level: `schema, source_event_schema, source, source_instance, event, event_id, instrument, timestamp, sequence, payload, source_meta` | Separate Bookmap event scope only; not trainable with current XAUUSD cTrader set |
+| [`logs/history_orderflowaggregated_XAUUSD.jsonl`](D:/projects/quant-trading/logs/history_orderflowaggregated_XAUUSD.jsonl) | 32 | `orderflow-history/v2` | `bar`, `summary`, `levels[]`, `timeframe=h1`, `instrument=XAUUSD` | Best anchor series for a first cTrader baseline |
+| [`logs/history_volumeprofile_XAUUSD.jsonl`](D:/projects/quant-trading/logs/history_volumeprofile_XAUUSD.jsonl) | 21 | `volumeprofile-history/v2` | `profile_type`, `bar`, `summary`, `levels[]`, `timeframe=h1`, `instrument=XAUUSD` | Enrichment series; only 19 exact timestamp overlaps with order flow |
+| [`logs/history_wyckoff_XAUUSD.jsonl`](D:/projects/quant-trading/logs/history_wyckoff_XAUUSD.jsonl) | 1416 | `wyckoff-history/v2` | `bar`, `wyckoff`, `wave`, `summary`, `timeframe=Re50`, `instrument=XAUUSD` | Higher-frequency enrichment series; must be window-aggregated before joining |
+
+### Incompatibilities That Matter
+
+- **Instrument mismatch:** Bookmap file in scope is `ESM6.CME@RITHMIC`; cTrader files are `XAUUSD`.
+- **Timeframe mismatch:** cTrader order flow and volume profile are `h1`; Wyckoff is `Re50`; Bookmap has no timeframe field.
+- **Shape mismatch:** Bookmap records are event-sequence rows with mostly string payload values; cTrader rows are nested numeric bar records.
+- **Coverage mismatch:** order flow has 32 rows, volume profile 21 rows, and only 19 exact timestamp overlaps with order flow.
+- **Data quality anomaly:** Wyckoff contains at least one anomalous row with negative `wyckoff.time` and `bar.range_ticks = 89`; dataset building needs explicit quarantine rules.
+
+## Recommended Dataset Contract
+
+Use one contract for **derived training rows**, separate from raw history contracts. Keep raw JSONL immutable under `logs/`; write normalized artifacts under `artifacts/`.
+
+### Recommended Baseline Scope
+
+- `dataset_scope`: `ctrader_xauusd_h1_baseline`
+- `anchor_series`: `order_flow_aggregated` H1
+- `join_series`:
+  - `volume_profile` H1 via backward exact/as-of join
+  - `wyckoff_state` via backward window aggregation up to the anchor timestamp
+- `excluded_from_baseline`:
+  - `history_alertlistener_ESM6.CME_RITHMIC.jsonl`
+
+### Training Row Fields
+
+| Group | Required Fields |
+|------|-----------------|
+| Identity | `row_id`, `dataset_scope`, `instrument`, `anchor_timestamp`, `anchor_timeframe`, `anchor_event_id` |
+| Provenance | `source_schemas`, `source_files`, `orderflow_event_id`, `volumeprofile_event_id`, `wyckoff_window_start`, `wyckoff_window_end`, `build_run_id` |
+| Anchor Bar | `open`, `high`, `low`, `close`, `spread`, `tick_size` |
+| Order Flow Features | `level_count`, `total_volume`, `buy_volume`, `sell_volume`, `delta_sum`, `abs_delta_sum`, `poc_price`, `poc_distance_to_close_ticks`, plus fixed `levels[]` aggregates |
+| Volume Profile Features | `profile_type`, `vp_poc`, `vp_vah`, `vp_val`, `vp_total_volume`, `vp_value_area_width_ticks`, `vp_poc_to_close_ticks` |
+| Wyckoff Features | `wy_count`, `wy_last_direction_sign`, `wy_last_wave_volume`, `wy_sum_wave_volume`, `wy_mean_volume_per_time`, `wy_max_wave_efficiency`, `wy_last_close_to_zigzag_ticks` |
+| Missingness Flags | `has_volume_profile`, `has_wyckoff_window`, `quarantined_source_count` |
+| Labels | `future_return_ticks_1`, `target_class_1`, `label_horizon_bars`, `label_threshold_ticks` |
+
+### Artifact Layout
+
+```text
+artifacts/
+├── datasets/{scope}/{run_id}/
+│   ├── raw/
+│   ├── normalized/
+│   ├── training_rows.parquet
+│   ├── dataset_manifest.json
+│   ├── feature_schema.json
+│   └── label_spec.json
+└── models/{scope}/{run_id}/
+    ├── model.pkl
+    ├── metrics.json
+    ├── predictions.parquet
+    └── train_config.json
+```
+
+## Recommended Label / Target Strategy
+
+**Use only the anchor series to define the target.** Do not use runtime trade history and do not derive labels from Bookmap events.
+
+- **Anchor:** `history_orderflowaggregated_XAUUSD.jsonl`
+- **Feature cutoff:** a row may use only source data with `timestamp <= anchor_timestamp`
+- **Primary numeric target:** `future_return_ticks_1 = (close[t+1] - close[t]) / tick_size`
+- **Baseline class target:**
+  - `1` if `future_return_ticks_1 >= long_threshold_ticks`
+  - `-1` if `future_return_ticks_1 <= short_threshold_ticks`
+  - `0` otherwise
+- **Why 1-bar horizon first:** there are only 32 anchor rows in scope; longer horizons shrink the runnable sample too aggressively for the first pipeline slice
+- **Evaluation:** keep both the numeric target and derived class in artifacts so later phases can compare regression vs classification without rebuilding the dataset
+
+## Architecture Decisions
+
+1. **Offline package, not runtime startup**
+   - Add `main/training/` for dataset build, feature build, training, and promotion commands.
+   - Do not train inside `AIAnalyzer`.
+
+2. **cTrader-first promoted model**
+   - First promoted model scope is `ctrader_xauusd_h1_baseline`.
+   - Treat current Bookmap file as a separate cataloged scope and schema fixture set.
+
+3. **Deterministic preprocessing**
+   - Input: immutable `logs/*.jsonl`
+   - Output: versioned parquet + manifest artifacts
+   - Every run records source files, row counts, schema ids, join policy, and quarantined rows.
+
+4. **Explicit promotion**
+   - Training writes only to `artifacts/models/...`.
+   - A separate `promote_model.py` copies one blessed artifact into `runtime/model.pkl`.
+
+5. **Trust code over stale docs**
+   - Planning should follow [`main/runtime_paths.py`](D:/projects/quant-trading/main/runtime_paths.py) and [`tests/test_runtime_artifacts.py`](D:/projects/quant-trading/tests/test_runtime_artifacts.py), not the older CSV-based runtime doc.
+
+## Implementation Slices
+
+### Slice 1: Catalog Raw Logs and Freeze Dataset Scope
+
+- Add a Phase 6 dataset manifest schema.
+- Implement per-source schema validation and quarantine rules.
+- Record row counts, time ranges, instruments, timeframes, and overlap stats.
+- Output: `dataset_manifest.json` and source-level contract tests.
+
+### Slice 2: Build Deterministic cTrader Training Rows
+
+- Flatten order flow, volume profile, and Wyckoff histories.
+- Aggregate `levels[]` into fixed numeric features.
+- Join H1/H1 with backward exact-or-asof rules.
+- Aggregate Wyckoff rows into anchor-window summaries.
+- Output: `training_rows.parquet`, `feature_schema.json`, `label_spec.json`.
+
+### Slice 3: Train and Evaluate Offline
+
+- Train a simple sklearn baseline from the derived training rows.
+- Use walk-forward splits only.
+- Persist metrics, predictions, feature importances, and config alongside the model.
+- Output: `artifacts/models/{scope}/{run_id}/...`.
+
+### Slice 4: Promotion, Runtime Handoff, and Docs
+
+- Add explicit model promotion into `runtime/model.pkl`.
+- Document how runtime and offline artifacts differ.
+- Add tests that guarantee training does not mutate live runtime artifacts.
+- Output: promotion CLI, operator notes, and regression coverage.
 
 ## Standard Stack
 
-### Core
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| Python | 3.12.10 | Training/runtime interpreter | Matches observed local environment and current pytest setup |
-| `pandas` | 3.0.0 | JSONL ingestion, flattening, as-of joins, feature tables | Standard tabular/time-series prep library; official docs cover `read_json`, `json_normalize`, and `merge_asof` |
-| `pyarrow` | 23.0.1 | Parquet read/write for normalized datasets and predictions | Standard local columnar storage; faster and more reproducible than ad hoc JSONL feature caches |
-| `numpy` | 2.3.4 | Numeric arrays and deterministic feature calculations | Already in repo requirements and standard for sklearn-compatible data |
-| `scikit-learn` | 1.8.0 | Baseline model training, walk-forward evaluation, persisted pipeline | Already used in repo, supports `Pipeline`, `TimeSeriesSplit`, metrics, and persisted estimators |
-| `joblib` | 1.5.3 | Persist/load trained sklearn artifact | Matches current runtime `model.pkl` loading pattern and official sklearn persistence guidance |
-
-### Supporting
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| `pytest` | 9.0.2 | Regression tests for dataset building, training, and promotion | Use for every new phase-6 pipeline component |
-| stdlib `argparse` + `json` | bundled | CLI/config + manifests | Use instead of adding Hydra/MLflow unless the phase scope expands materially |
-
-### Alternatives Considered
-| Instead of | Could Use | Tradeoff |
-|------------|-----------|----------|
-| `scikit-learn` baseline | XGBoost/LightGBM | Stronger on large tabular sets, but adds non-trivial dependency/runtime complexity and is not needed for the first reproducible pipeline |
-| local manifest JSON + artifact dirs | MLflow/DVC | More experiment management features, but overkill for a local-only first training phase |
-| parquet feature store | JSONL-derived ad hoc CSV/JSON artifacts | Simpler short-term, but slower, larger, and less stable for replayable train/eval runs |
-
-**Installation:**
-```bash
-pip install numpy==2.3.4 pandas==3.0.0 pyarrow==23.0.1 scikit-learn==1.8.0 joblib==1.5.3 pytest==9.0.2
-```
-
-**Version verification:** As of 2026-03-24, the versions above were verified against official PyPI project pages/search results. Direct PyPI JSON fetch was blocked by `robots.txt`, so PyPI page/search results were used instead. Keep training dependencies in a separate pinned file such as `main/requirements-train.txt` so runtime dependencies are not destabilized by Phase 6.
-
-## Architecture Patterns
-
-### Recommended Project Structure
-```text
-main/
-├── training/
-│   ├── build_dataset.py      # JSONL -> normalized parquet + manifests
-│   ├── build_features.py     # fixed-schema feature table + labels
-│   ├── train_model.py        # offline train/eval run
-│   ├── promote_model.py      # explicit copy into runtime/model.pkl
-│   └── contracts.py          # dataset-scope and feature-schema validation
-configs/
-├── training/
-│   ├── ctrader_xauusd_baseline.json
-│   └── bookmap_event_only.json
-artifacts/
-├── datasets/
-│   └── {scope}/{run_id}/
-├── models/
-│   └── {scope}/{run_id}/
-tests/
-├── fixtures/phase6/
-└── test_training_*.py
-runtime/
-└── model.pkl                 # promoted artifact only, never direct training output
-```
-
-### Observed Dataset Inventory
-| Scope | Files | Rows | Time Range | Notes |
-|------|------|------|-----------|------|
-| `bookmap_esm6_events` | `history_alertlistener_ESM6.CME_RITHMIC.jsonl` | 1188 | 2026-03-23 17:33Z -> 2026-03-24 14:47Z | Event stream with nested string payload fields |
-| `bookmap_gcj6_events` | `history_alertlistener_GCJ6.COMEX_RITHMIC.jsonl` | 2415 | 2026-03-23 17:31Z -> 2026-03-24 14:46Z | Event stream with mixed event taxonomy |
-| `ctrader_xauusd_orderflow_h1` | `history_orderflowaggregated_XAUUSD.jsonl` | 32 | 2026-03-20 07:00Z -> 2026-03-23 15:00Z | H1 anchor candidate |
-| `ctrader_xauusd_volumeprofile_h1` | `history_volumeprofile_XAUUSD.jsonl` | 21 | 2026-03-20 20:00Z -> 2026-03-23 17:00Z | H1 enrichment candidate |
-| `ctrader_xauusd_wyckoff_re50` | `history_wyckoff_XAUUSD.jsonl` | 1416 | 2026-03-20 06:09Z -> 2026-03-23 16:57Z | Higher-frequency enrichment candidate |
-
-### Pattern 1: Dataset Scope Before Model Scope
-**What:** Define a `dataset_scope` first. A scope is the smallest valid combination of source family, canonical instrument, anchor series, and label definition that can be trained without ambiguous joins.
-
-**When to use:** Always. This is the first design decision for Phase 6.
-
-**Recommendation:** Start with `ctrader_xauusd_h1_baseline` as the promoted-model scope. Keep `bookmap_esm6_events` and `bookmap_gcj6_events` as separate scopes until matching price/label series exist.
-
-**Example:**
-```json
-{
-  "dataset_scope": "ctrader_xauusd_h1_baseline",
-  "anchor_source": "orderflow-history/v2",
-  "anchor_event": "order_flow_aggregated",
-  "instrument": "XAUUSD",
-  "join_sources": [
-    "volumeprofile-history/v2",
-    "wyckoff-history/v2"
-  ],
-  "label_spec": {
-    "type": "future_return_classification",
-    "horizon_bars": 3,
-    "long_threshold_ticks": 150,
-    "short_threshold_ticks": -150
-  }
-}
-```
-
-### Pattern 2: Anchor-On-One-Series, Enrich With Backward As-Of Joins
-**What:** Use one anchor series per dataset scope, then join slower/faster feeds backward in time with explicit tolerance. Do not inner-join or nearest-join raw trading feeds casually.
-
-**When to use:** When building the feature table for multi-feed cTrader training.
-
-**Recommendation:** Use H1 order-flow bars as the anchor for the first XAUUSD dataset. Join volume-profile H1 rows with exact or short-tolerance backward matching, then aggregate the higher-frequency Wyckoff stream into rolling summaries up to the anchor timestamp.
-
-**Why:** `pandas.merge_asof` is purpose-built for nearest-time joins, but only after sorting and only when the join semantics are explicit. This prevents accidental future leakage.
-
-**Example:**
-```python
-# Source: https://pandas.pydata.org/docs/reference/api/pandas.merge_asof.html
-dataset = pd.merge_asof(
-    left=order_flow.sort_values("timestamp"),
-    right=volume_profile.sort_values("timestamp"),
-    on="timestamp",
-    by="instrument",
-    direction="backward",
-    tolerance=pd.Timedelta("2h"),
-)
-```
-
-### Pattern 3: Offline Train -> Evaluate -> Promote
-**What:** Training writes versioned artifacts to `artifacts/models/{scope}/{run_id}/`. Promotion is a separate command that copies one blessed `model.pkl` to `runtime/model.pkl`.
-
-**When to use:** Always. Never let `train_model.py` write directly to `runtime/model.pkl`.
-
-**Why:** Current runtime assumptions remain intact, and the promoted model becomes an explicit operational decision instead of a side effect of experimentation.
-
-**Recommended artifact payload per run:**
-- `model.pkl`
-- `metrics.json`
-- `train_config.json`
-- `dataset_manifest.json`
-- `feature_schema.json`
-- `label_spec.json`
-- `predictions.parquet`
-- `environment.json`
-
-### Pattern 4: Horizon-Based Labels First, Not Live PnL Labels
-**What:** Define labels from future price movement on the anchor series, not from simulated trades or runtime side effects.
-
-**When to use:** For the first baseline model in this repo.
-
-**Recommendation:** Use a 3-class horizon label on the anchor close:
-- `1` if future close over `N` anchor bars rises above a positive tick threshold
-- `-1` if it falls below a negative tick threshold
-- `0` otherwise
-
-**Why:** There is no current `trade_history.jsonl` dataset available for supervised labels, and current runtime trade generation is itself driven by the dummy model. Using live-trade output as training truth would create circular labels.
-
-### Anti-Patterns to Avoid
-- **Training in `AIAnalyzer` startup:** This makes experiments non-reproducible and changes runtime behavior as a side effect.
-- **Joining Bookmap and cTrader solely on timestamp:** Current files are instrument-misaligned and would create false training rows.
-- **Feeding raw `levels` arrays directly to sklearn as variable-length objects:** First aggregate them into a fixed schema.
-- **Writing training intermediates back into `logs/`:** Keep `logs/` immutable as raw capture history and write derived data under `artifacts/`.
-- **Using shuffled train/test splits:** This leaks future information in time-ordered trading data.
-
-## Don't Hand-Roll
-
-| Problem | Don't Build | Use Instead | Why |
-|---------|-------------|-------------|-----|
-| Time-series cross-validation | Custom split logic | `sklearn.model_selection.TimeSeriesSplit` | Official implementation preserves time order and supports `gap` and `test_size` |
-| Timestamp-nearest feed joins | Manual loop-based join code | `pandas.merge_asof` | Correct semantics for backward/forward/nearest joins and explicit tolerances |
-| JSON flattening for nested records | Ad hoc dict walking everywhere | `pandas.read_json(lines=True)` + `pandas.json_normalize` | Faster to write, easier to test, and standard for semi-structured JSON |
-| Local training dataset cache format | One-off CSV dumps | `pyarrow` parquet datasets | Columnar storage is smaller, faster, and easier to replay |
-| Model persistence | Custom binary/JSON serialization | `joblib.dump` / `joblib.load` | Already matches runtime expectations for sklearn artifacts |
-
-**Key insight:** The hard part in this phase is not “train a model”; it is producing a fixed, replayable, leakage-safe tabular dataset from nested event logs. Use proven data/table/splitting primitives and reserve custom code for repo-specific contract validation and feature aggregation.
+| Python | existing repo/runtime | Training CLI and artifact pipeline | Matches the current desktop-native Python bridge |
+| `numpy` | existing `main/requirements.txt` dep | Numeric feature arrays | Already part of the current analyzer stack |
+| `pandas` | existing `main/requirements.txt` dep | JSONL ingestion, flattening, time-aware joins | Best fit for deterministic tabular preprocessing |
+| `scikit-learn` | existing `main/requirements.txt` dep | Baseline classifier and walk-forward evaluation | Already used in runtime code today |
+| `joblib` | existing `main/requirements.txt` dep | Model persistence | Matches current `model.pkl` load pattern |
+| `pyarrow` | new pinned dep to add | Parquet dataset storage | Needed for versioned, deterministic training artifacts |
+| `pytest` | existing repo test framework | Dataset/training regression tests | `pytest.ini` and current tests already exist |
 
 ## Common Pitfalls
 
-### Pitfall 1: False Cross-Source Alignment
-**What goes wrong:** Bookmap and cTrader rows get merged because timestamps overlap loosely, even though they represent different instruments and market contexts.
-
-**Why it happens:** The filenames all live under `logs/`, which makes them look like one training corpus when they are actually separate dataset scopes.
-
-**How to avoid:** Require join preconditions:
-- same canonical instrument
-- overlapping time range
-- declared anchor series
-- explicit tolerance and direction
-
-**Warning signs:** Training rows have mixed `instrument` values, missing enrichment fields after join, or sudden row-count collapse.
-
-### Pitfall 2: Future Leakage Through Joins or Labels
-**What goes wrong:** Feature rows accidentally include future Wyckoff state, future volume profile, or label data from the evaluation window.
-
-**Why it happens:** Raw feeds are asynchronous and nested. Naive joins or rolling windows can silently pull future observations.
-
-**How to avoid:** Sort by timestamp, use backward `merge_asof`, write one label builder with strict horizon rules, and keep split logic after feature/label construction but before any scaling/tuning.
-
-**Warning signs:** Unrealistically strong validation metrics on tiny datasets, especially when row counts are low.
-
-### Pitfall 3: Variable-Length `levels` Arrays Become Unstable Features
-**What goes wrong:** Order-flow and volume-profile `levels` arrays are passed through as raw lists or expanded into inconsistent columns.
-
-**Why it happens:** The source logs are rich but sparse and not shape-stable.
-
-**How to avoid:** Aggregate `levels` into a fixed feature schema first, such as:
-- top-N volume concentration
-- delta skew
-- distance of POC/VAH/VAL to close in ticks
-- count of positive vs negative delta levels
-
-**Warning signs:** Training code depends on Python objects instead of numeric columns, or feature columns differ across runs.
-
-### Pitfall 4: Training Overwrites Live Runtime Artifact
-**What goes wrong:** An experimental run replaces `runtime/model.pkl` and silently changes live inference behavior.
-
-**Why it happens:** The current code path already loads/saves `runtime/model.pkl`, so it is tempting to reuse it directly.
-
-**How to avoid:** Only `promote_model.py` should touch `runtime/model.pkl`. Training writes to versioned artifact directories only.
-
-**Warning signs:** Runtime model timestamp changes after offline experimentation, or analyzer behavior changes without promotion metadata.
-
-### Pitfall 5: Treating Current Sample Size as Production-Ready
-**What goes wrong:** The team over-interprets metrics from 32 H1 order-flow rows, 21 H1 volume-profile rows, and 1416 Wyckoff rows.
-
-**Why it happens:** The phase goal is “usable artifact,” but the currently available data is enough for pipeline implementation and smoke evaluation, not reliable alpha claims.
-
-**How to avoid:** Plan acceptance around reproducibility, explicit labels, and stable evaluation output first. Treat performance thresholds as provisional until longer same-scope captures exist.
-
-**Warning signs:** High variance across folds, class collapse, or metrics changing materially from tiny label-threshold changes.
-
-### Pitfall 6: Trusting Outdated Runtime Docs
-**What goes wrong:** Implementation plans target CSV runtime files described in `docs/pipeline-runtime-operations.md` instead of the JSONL/log layout enforced by code and tests.
-
-**Why it happens:** The docs lag the Phase 2 code changes.
-
-**How to avoid:** Treat `main/runtime_paths.py` and `tests/test_runtime_artifacts.py` as the source of truth until docs are corrected.
-
-**Warning signs:** Plans mention `runtime/history_*.csv` or write derived training artifacts into old CSV paths.
-
-## Code Examples
-
-Verified patterns from official sources:
-
-### Read JSONL In Chunks
-```python
-# Sources:
-# - https://pandas.pydata.org/docs/reference/api/pandas.read_json.html
-frames = []
-for chunk in pd.read_json(path, lines=True, chunksize=5000):
-    frames.append(chunk)
-df = pd.concat(frames, ignore_index=True)
-```
-
-### Flatten Nested JSON And Preserve Fixed Columns
-```python
-# Source: https://pandas.pydata.org/docs/reference/api/pandas.json_normalize.html
-records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-flat = pd.json_normalize(records)
-```
-
-### Backward As-Of Join For Time-Ordered Feeds
-```python
-# Source: https://pandas.pydata.org/docs/reference/api/pandas.merge_asof.html
-joined = pd.merge_asof(
-    left=anchor.sort_values("timestamp"),
-    right=enrichment.sort_values("timestamp"),
-    on="timestamp",
-    by="instrument",
-    direction="backward",
-    tolerance=pd.Timedelta("2h"),
-)
-```
-
-### Leakage-Safe Train/Eval With A Persisted Pipeline
-```python
-# Sources:
-# - https://scikit-learn.org/stable/modules/generated/sklearn.pipeline.Pipeline.html
-# - https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html
-# - https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.HistGradientBoostingClassifier.html
-# - https://scikit-learn.org/stable/model_persistence.html
-from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.pipeline import Pipeline
-import joblib
-
-pipeline = Pipeline(
-    [
-        ("model", HistGradientBoostingClassifier(random_state=42))
-    ]
-)
-
-splitter = TimeSeriesSplit(n_splits=5, gap=1)
-
-for train_idx, test_idx in splitter.split(X):
-    pipeline.fit(X.iloc[train_idx], y.iloc[train_idx])
-    proba = pipeline.predict_proba(X.iloc[test_idx])
-
-joblib.dump(pipeline, artifact_dir / "model.pkl")
-```
-
-### Write A Reusable Parquet Dataset
-```python
-# Source: https://arrow.apache.org/docs/python/parquet.html
-import pyarrow as pa
-import pyarrow.parquet as pq
-
-table = pa.Table.from_pandas(feature_df)
-pq.write_table(table, artifact_dir / "features.parquet")
-```
-
-## State of the Art
-
-| Old Approach | Current Approach | When Changed | Impact |
-|--------------|------------------|--------------|--------|
-| Startup-time dummy training inside `AIAnalyzer` | Offline train/eval pipeline with explicit artifact promotion | Phase 6 target | Reproducible experiments without changing live startup behavior |
-| Direct runtime writes implied by old docs | `logs/*.jsonl` raw histories + `runtime/model.pkl`/`runtime/status.json` in code/tests | Phase 2 completed 2026-03-23 | Training should ingest JSONL histories, not outdated CSV paths |
-| Treat all feeds as one pool | Dataset scopes defined by source + instrument + anchor + label spec | Phase 6 planning requirement | Prevents invalid cross-source joins and lets multiple models coexist safely |
-
-**Deprecated/outdated:**
-- `docs/pipeline-runtime-operations.md` runtime CSV descriptions: outdated relative to `main/runtime_paths.py` and `tests/test_runtime_artifacts.py`
-- “Train from runtime buffer and save immediately”: outdated for any repeatable ML workflow in this repo
+- **False fusion of Bookmap and cTrader data:** same folder does not mean same market scope.
+- **Future leakage through joins:** all enrichment joins must be backward-only relative to the anchor timestamp.
+- **Variable-length `levels[]` features:** convert them to fixed aggregates before modeling.
+- **Training writing to runtime:** only promotion may touch `runtime/model.pkl`.
+- **Over-reading tiny samples:** current counts are enough to build a pipeline, not to claim robust trading edge.
 
 ## Open Questions
 
-1. **What official requirement IDs should Phase 6 own?**
-   - What we know: `ROADMAP.md` says Phase 6 requirements are TBD.
-   - What's unclear: Traceability IDs and acceptance language are missing.
-   - Recommendation: Add official Phase 6 IDs before execution starts; use the candidate IDs above as a starting point.
+1. **Should Phase 6 stop at a cTrader-only baseline, or also define a future aligned Bookmap capture contract?**
+   - Recommendation: baseline now, aligned-capture contract only if the planner wants an extra slice.
 
-2. **Is the first promoted model allowed to be cTrader-only?**
-   - What we know: Current logs only support a valid multi-feed scope for `XAUUSD` on cTrader.
-   - What's unclear: Whether the milestone expects one unified cross-source model or any usable local model artifact.
-   - Recommendation: Lock the first promoted artifact to `ctrader_xauusd_h1_baseline`. Keep Bookmap as separate scope work unless matching captures are added.
+2. **Should volume-profile gaps drop anchor rows or survive via missingness flags?**
+   - Recommendation: keep rows, set `has_volume_profile = false`, and record the join miss in the manifest.
 
-3. **What exact label horizon and thresholds should be locked for the baseline?**
-   - What we know: There is no current supervised trade-history target.
-   - What's unclear: Required horizon and threshold policy for `long/flat/short`.
-   - Recommendation: Freeze one simple horizon-based label spec in planning. Do not explore multiple competing target formulations in the same first implementation wave.
-
-4. **Do we need Bookmap price alignment before Bookmap model training?**
-   - What we know: Current Bookmap histories contain event payloads and prices encoded as strings, but no aligned cTrader-compatible anchor series.
-   - What's unclear: Whether a Bookmap-only event model is useful enough for this phase.
-   - Recommendation: Treat Bookmap logs as separate contract and featurization scope for now, not as part of the first promoted trading model.
+3. **Should the runtime keep consuming a classifier with `-1/0/1`, or should Phase 6 also add a probability/threshold adapter?**
+   - Recommendation: keep the first promoted artifact classifier-compatible to minimize Phase 6 runtime churn.
 
 ## Validation Architecture
 
 ### Test Framework
+
 | Property | Value |
 |----------|-------|
-| Framework | `pytest` 9.0.2 |
-| Config file | `pytest.ini` |
-| Quick run command | `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pytest tests/test_training_dataset_contract.py -q` |
-| Full suite command | `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pytest tests -q` |
-
-**Current verification note:** Test discovery was confirmed with `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pytest tests --collect-only -q`. Existing collected tests cover runtime artifacts, socket lifecycle, pipeline status, and alert-listener conversion, but nothing yet for Phase 6 training behavior.
+| Framework | `pytest` |
+| Config file | [`pytest.ini`](D:/projects/quant-trading/pytest.ini) |
+| Quick run command | `python -m pytest tests/test_training_contracts.py -q` |
+| Full suite command | `python -m pytest tests -q` |
 
 ### Phase Requirements → Test Map
+
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| MLDATA-01 | Normalize raw JSONL into fixed-schema dataset tables | unit | `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pytest tests/test_training_dataset_contract.py -q` | ❌ Wave 0 |
-| MLDATA-02 | Reject invalid same-run cross-source joins and enforce dataset scopes | unit | `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pytest tests/test_training_join_policy.py -q` | ❌ Wave 0 |
-| MLTRAIN-01 | Train run writes model, metrics, manifests, and feature schema deterministically | integration | `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pytest tests/test_training_pipeline.py -q` | ❌ Wave 0 |
-| MLTRAIN-02 | Promotion copies only blessed artifact into `runtime/model.pkl` | integration | `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pytest tests/test_model_promotion.py -q` | ❌ Wave 0 |
-| MLEVAL-01 | Label generation and walk-forward splits are deterministic and leakage-safe | unit | `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pytest tests/test_training_labels.py -q` | ❌ Wave 0 |
+| MLDATA-01 | Raw logs normalize into one documented derived-row contract | unit | `python -m pytest tests/test_training_contracts.py -q` | ❌ Wave 0 |
+| MLDATA-02 | Join rules reject instrument/timeframe mismatches and enforce backward joins | unit | `python -m pytest tests/test_training_alignment.py -q` | ❌ Wave 0 |
+| MLLABEL-01 | Labels use only future anchor closes and no feature leakage | unit | `python -m pytest tests/test_training_labels.py -q` | ❌ Wave 0 |
+| MLTRAIN-01 | Offline training writes versioned artifacts and manifests | integration | `python -m pytest tests/test_training_runner.py -q` | ❌ Wave 0 |
+| MLTRAIN-02 | Promotion copies only blessed artifact into `runtime/model.pkl` | integration | `python -m pytest tests/test_model_promotion.py -q` | ❌ Wave 0 |
+| MLEVAL-01 | Walk-forward evaluation emits deterministic metrics/predictions | integration | `python -m pytest tests/test_training_eval.py -q` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** targeted phase-6 pytest file for the touched area
-- **Per wave merge:** `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m pytest tests -q`
-- **Phase gate:** Full suite green plus one reproducible train run producing the same manifest/config/schema outputs on the same inputs
+
+- **Per task commit:** targeted Phase 6 pytest file
+- **Per wave merge:** `python -m pytest tests -q`
+- **Phase gate:** full suite green plus one deterministic end-to-end training run on fixture data before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_training_dataset_contract.py` — validates schema normalization and per-scope row contracts
-- [ ] `tests/test_training_join_policy.py` — validates same-instrument and tolerance-based join rules
-- [ ] `tests/test_training_labels.py` — validates horizon labels and no-future-leakage behavior
-- [ ] `tests/test_training_pipeline.py` — validates artifact directory layout and metrics output
-- [ ] `tests/test_model_promotion.py` — validates explicit promotion into `runtime/model.pkl`
-- [ ] `tests/fixtures/phase6/` — small frozen JSONL fixtures for one cTrader scope and one Bookmap scope
+
+- [ ] `tests/test_training_contracts.py`
+- [ ] `tests/test_training_alignment.py`
+- [ ] `tests/test_training_labels.py`
+- [ ] `tests/test_training_runner.py`
+- [ ] `tests/test_model_promotion.py`
+- [ ] `tests/test_training_eval.py`
+- [ ] `main/training/` package does not exist yet
+- [ ] Add one pinned training dependency file for `pyarrow` and any new training-only deps
+- [ ] Normalize the Python invocation for this workstation if `python -m pytest` is not currently stable in shell
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Local repo files: `main/ai_analyzer.py`, `main/runtime_paths.py`, `main/order_simulator.py`, `docs/event-contract-v1.md`, `tests/test_runtime_artifacts.py`, `tests/test_ai_analyzer_exports.py`
-- scikit-learn Pipeline docs: https://scikit-learn.org/stable/modules/generated/sklearn.pipeline.Pipeline.html
-- scikit-learn TimeSeriesSplit docs: https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html
-- scikit-learn HistGradientBoostingClassifier docs: https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.HistGradientBoostingClassifier.html
-- scikit-learn model persistence docs: https://scikit-learn.org/stable/model_persistence.html
-- pandas `read_json` docs: https://pandas.pydata.org/docs/reference/api/pandas.read_json.html
-- pandas `json_normalize` docs: https://pandas.pydata.org/docs/reference/api/pandas.json_normalize.html
-- pandas `merge_asof` docs: https://pandas.pydata.org/docs/reference/api/pandas.merge_asof.html
-- Apache Arrow parquet docs: https://arrow.apache.org/docs/python/parquet.html
+
+- [`main/ai_analyzer.py`](D:/projects/quant-trading/main/ai_analyzer.py) - current model bootstrap, live feature extraction, and inference ownership
+- [`main/runtime_paths.py`](D:/projects/quant-trading/main/runtime_paths.py) - runtime/log artifact authority
+- [`scripts/convert_alertlistener_history_csv_to_jsonl.py`](D:/projects/quant-trading/scripts/convert_alertlistener_history_csv_to_jsonl.py) - Bookmap history conversion contract
+- [`docs/event-contract-v1.md`](D:/projects/quant-trading/docs/event-contract-v1.md) - canonical v1 event envelope
+- [`tests/test_runtime_artifacts.py`](D:/projects/quant-trading/tests/test_runtime_artifacts.py) - current artifact-path expectations
+- Required JSONL logs listed in the task prompt - row counts, keys, timeframes, and overlap evidence
 
 ### Secondary (MEDIUM confidence)
-- PyPI pandas project page/search result: https://pypi.org/project/pandas/
-- PyPI scikit-learn project page/search result: https://pypi.org/project/scikit-learn/
-- PyPI numpy project page/search result: https://pypi.org/project/numpy/
-- PyPI joblib project page/search result: https://pypi.org/project/joblib/
-- PyPI pyarrow project page/search result: https://pypi.org/project/pyarrow/
-- PyPI pytest project page/search result: https://pypi.org/project/pytest/
 
-### Tertiary (LOW confidence)
-- None
+- [`docs/pipeline-runtime-operations.md`](D:/projects/quant-trading/docs/pipeline-runtime-operations.md) - useful ownership intent, but stale relative to code/tests
+- [`main/requirements.txt`](D:/projects/quant-trading/main/requirements.txt) - current Python dependency baseline
 
 ## Metadata
 
 **Confidence breakdown:**
-- Standard stack: HIGH - aligned with current repo dependencies and verified against official docs/PyPI pages
-- Architecture: MEDIUM - contract and promotion design are well supported, but label scope still needs a planning decision
-- Pitfalls: HIGH - driven directly by observed repo schema mismatch, instrument mismatch, and outdated runtime docs
+- Current ownership: HIGH - directly verified in local code and tests
+- Log schema findings: HIGH - directly verified from the required JSONL files
+- Dataset contract recommendation: MEDIUM - grounded in local evidence but still a design recommendation
+- Label strategy: MEDIUM - best fit for current data volume, but thresholds remain a planning choice
 
 **Research date:** 2026-03-24
-**Valid until:** 2026-04-23
+**Valid until:** 2026-04-23 or until new aligned same-instrument logs are added
