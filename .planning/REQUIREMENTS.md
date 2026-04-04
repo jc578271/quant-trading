@@ -53,6 +53,13 @@
 - [ ] **MLTRAIN-02**: Promotion into `runtime/model.pkl` is explicit and separate from training
 - [ ] **MLEVAL-01**: Walk-forward evaluation outputs are reproducible enough to replay and compare safely
 
+### OHLC Training Data Export
+
+- [x] **OHLC-01**: Indicator exports OHLC bar data as event-contract/v1 JSONL with configurable date range
+- [x] **OHLC-02**: Date input follows existing LoadTickFrom pattern (Today/Yesterday/One_Week/Custom dd/MM/yyyy)
+- [x] **OHLC-03**: Socket export streams live OHLC events to 127.0.0.1:5555 with heartbeat and reconnect
+- [x] **OHLC-04**: Split-file project structure matches existing cTrader indicator conventions
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -84,12 +91,16 @@
 | MLTRAIN-01 | Phase 6 | Pending |
 | MLTRAIN-02 | Phase 6 | Pending |
 | MLEVAL-01 | Phase 6 | Pending |
+| OHLC-01 | Phase 7 | Complete |
+| OHLC-02 | Phase 7 | Complete |
+| OHLC-03 | Phase 7 | Complete |
+| OHLC-04 | Phase 7 | Complete |
 
 **Coverage:**
-- v1 requirements: 12 total
-- Mapped to phases: 12
+- v1 requirements: 16 total
+- Mapped to phases: 16
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-18*
-*Last updated: 2026-03-24 after Phase 6 planning*
+*Last updated: 2026-04-04 after Phase 7 execution*

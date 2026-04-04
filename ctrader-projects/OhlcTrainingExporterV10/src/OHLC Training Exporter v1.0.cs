@@ -44,6 +44,9 @@ namespace cAlgo
         private bool _hasDateSelectionError;
         private DateTime _nextHeartbeatAtUtc = DateTime.MinValue;
         private DateTime _nextReconnectAtUtc = DateTime.MinValue;
+        private bool _hasConnectedOnce;
+        private Border _controlsBorder;
+        private Button _panelToggleButton;
 
         public enum LoadTickFrom_Data
         {

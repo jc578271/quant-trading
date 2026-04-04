@@ -16,6 +16,7 @@ This roadmap turns the existing trading workspace into a coherent local pipeline
 - [ ] **Phase 4: Add Safe Execution Controls** - Gate live execution behind validated inputs and explicit modes
 - [ ] **Phase 5: Lock In Build & Verification** - Add repeatable build/smoke/regression workflow for the integrated path
 - [ ] **Phase 6: Build and Train AI Trading Model** - Train a local model from Bookmap and cTrader JSONL histories
+- [x] **Phase 7: cTrader OHLC Training Data Exporter** - Export OHLC bar data as JSONL for AI training (completed 2026-04-04)
 
 ## Phase Details
 
@@ -107,10 +108,25 @@ Plans:
 - [ ] 06-02: Train and evaluate the offline baseline model with versioned artifacts
 - [ ] 06-03: Promote compatible artifacts into runtime and harden runtime loading
 
+### Phase 7: cTrader OHLC Training Data Exporter
+**Goal**: Create a dedicated cTrader indicator that exports OHLC bar data as event-contract/v1 JSONL for AI model training, with configurable date range and dual file+socket export.
+**Depends on**: Nothing (standalone cTrader indicator, can execute in parallel with other phases)
+**Requirements**: [OHLC-01, OHLC-02, OHLC-03, OHLC-04]
+**Success Criteria** (what must be TRUE):
+  1. A new `OhlcTrainingExporterV10` indicator project compiles and deploys as `.algo` to cTrader
+  2. The indicator exports OHLC data following `ohlc-history/v1` schema to `logs/history_ohlc_{symbol}.jsonl`
+  3. Date input, UI panel, and export button follow the exact patterns of WeisWyckoffSystemV20
+  4. Socket export streams live bar data to `127.0.0.1:5555` with heartbeat
+**Plans**: 1 plan
+
+Plans:
+- [x] 07-01: Create OhlcTrainingExporterV10 project with full OHLC export, socket, and UI
+
 ## Progress
 
 **Execution Order:**
 Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
+Phase 7 is independent and can execute at any time.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -120,3 +136,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 4. Add Safe Execution Controls | 0/2 | Not started | - |
 | 5. Lock In Build & Verification | 0/2 | Not started | - |
 | 6. Build and Train AI Trading Model | 0/3 | Planned | - |
+| 7. cTrader OHLC Training Data Exporter | 1/1 | Complete | 2026-04-04 |

@@ -1,0 +1,55 @@
+{
+  "sourcePath": "..\\..\\..\\ctrader-indicators\\Raw Source Code\\OHLC Training Exporter v1.0.cs",
+  "targetDir": ".\\src",
+  "mainOutputFileName": "OHLC Training Exporter v1.0.cs",
+  "sharedHeader": {
+    "startLine": 1,
+    "endLine": 11
+  },
+  "sharedFooter": {
+    "startLine": 1,
+    "endLine": 1
+  },
+  "mainOutputReplacements": [
+    {
+      "oldText": "    public class OhlcTrainingExporterV10 : Indicator",
+      "newText": "    public partial class OhlcTrainingExporterV10 : Indicator"
+    }
+  ],
+  "merge": {
+    "mainInputReplacements": [
+      {
+        "oldText": "    public partial class OhlcTrainingExporterV10 : Indicator",
+        "newText": "    public class OhlcTrainingExporterV10 : Indicator"
+      }
+    ],
+    "mainTrailingLinesCount": 2,
+    "insertMainTrailingLinesBeforeSection": "ParamsPanel"
+  },
+  "sections": [
+    {
+      "name": "Lifecycle",
+      "outputFileName": "OHLC Training Exporter v1.0.Lifecycle.cs",
+      "startLine": 1,
+      "endLine": 280,
+      "removeFromMain": true,
+      "prependSharedHeader": false
+    },
+    {
+      "name": "ParamsPanel",
+      "outputFileName": "OHLC Training Exporter v1.0.ParamsPanel.cs",
+      "startLine": 281,
+      "endLine": 640,
+      "removeFromMain": true,
+      "prependSharedHeader": false
+    },
+    {
+      "name": "Styles",
+      "outputFileName": "OHLC Training Exporter v1.0.Styles.cs",
+      "startLine": 641,
+      "endLine": 760,
+      "removeFromMain": true,
+      "prependSharedHeader": false
+    }
+  ]
+}
