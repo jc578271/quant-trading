@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/hoang/.local/bin/**)",
+      "Bash(findstr /i claude)",
+      "Bash(dir \"C:\\\\Users\\\\hoang\\\\.local\\\\bin\" /b)",
+      "Bash(npm install:*)",
+      "Bash(where claude:*)",
+      "Bash(claude --version)"
+    ],
+    "additionalDirectories": [
+      "d:\\projects\\quant-trading",
+      "C:\\Users\\hoang\\.local\\bin"
+    ]
+  },
+  "spinnerTipsEnabled": false
+}
