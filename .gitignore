@@ -2,6 +2,7 @@
 *.log
 *.jsonl
 __pycache__
+.env
 
 .gitnexus
 .dotnet-cli/
@@ -15,3 +16,4 @@ __pycache__
 .gradle-cache/
 runtime/
 logs/
+artifacts/

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
-from main import _initialize_status
+from main import _initialize_status, _load_env_file
 from pipeline_status import PipelineStatus, parse_timestamp
 from tests.conftest import read_status_json
 
@@ -83,7 +84,7 @@ def test_parse_timestamp_accepts_epoch_with_dotnet_fractional_precision():
     assert parsed == datetime(1970, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 
 
-def test_execution_stage_is_degraded_when_mt5_disconnects_but_simulator_available(runtime_root):
+def test_execution_stage_is_degraded_when_mt5_disconnects(runtime_root):
     status = PipelineStatus(
         session_started_at="2026-03-22T00:00:00Z",
         runtime_root=runtime_root,
@@ -93,12 +94,34 @@ def test_execution_stage_is_degraded_when_mt5_disconnects_but_simulator_availabl
         status,
         "2026-03-22T00:00:00Z",
         mt5_connected=False,
-        simulator_enabled=True,
+        simulator_enabled=False,
         execution_errors_total=1,
     )
 
     execution = read_status_json(runtime_root)["stages"]["execution"]
     assert execution["state"] == "degraded"
-    assert execution["reason"] == "mt5 disconnected; simulator only"
+    assert execution["reason"] == "mt5 disconnected"
     assert execution["mt5_connected"] is False
-    assert execution["simulator_enabled"] is True
+    assert execution["simulator_enabled"] is False
+
+
+def test_load_env_file_sets_environment_variables(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "# comment\n"
+        "QT_ENABLE_LIVE_MT5=1\n"
+        "QT_MT5_SERVER=Exness-MT5Trial17\n"
+        "\n"
+        "QT_MT5_SYMBOL_XAUUSD=XAUUSDm\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("QT_ENABLE_LIVE_MT5", raising=False)
+    monkeypatch.delenv("QT_MT5_SERVER", raising=False)
+    monkeypatch.delenv("QT_MT5_SYMBOL_XAUUSD", raising=False)
+
+    loaded_path = _load_env_file(env_path)
+
+    assert loaded_path == Path(env_path)
+    assert os.environ["QT_ENABLE_LIVE_MT5"] == "1"
+    assert os.environ["QT_MT5_SERVER"] == "Exness-MT5Trial17"
+    assert os.environ["QT_MT5_SYMBOL_XAUUSD"] == "XAUUSDm"

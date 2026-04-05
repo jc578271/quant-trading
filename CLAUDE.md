@@ -1,7 +1,7 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **quant-trading** (2192 symbols, 6361 relationships, 188 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **quant-trading** (2308 symbols, 6789 relationships, 199 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -99,6 +99,70 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## ⛔ Plan-Only Mode — KHÔNG ĐƯỢC SỬA CODE
+
+**Claude CHỈ ĐƯỢC PHÉP lên plan. TUYỆT ĐỐI KHÔNG được sửa, tạo, hoặc xóa bất kỳ file code nào.**
+
+### Quy tắc bắt buộc
+
+- **NEVER** use `Edit`, `Write`, or any tool that modifies source code files.
+- **NEVER** run shell commands that modify code (`sed`, `awk`, `echo >`, `patch`, etc.).
+- **ONLY** allowed to: Read files, search code, run GitNexus tools, analyze, and **produce plans**.
+- **Exception**: editing `CLAUDE.md`, `.claude/`, `.planning/` directories.
+
+### Token optimization
+
+Codex có cùng quyền truy cập codebase và MCP tools như Claude. Do đó:
+
+- **KHÔNG paste code hiện tại** vào plan — chỉ reference bằng file path + function/class name + line range.
+- **KHÔNG paste full file content** cho new files — mô tả structure, exports, logic. Chỉ paste code snippet khi logic phức tạp/non-obvious mà mô tả bằng lời sẽ gây hiểu nhầm.
+- **Dùng bullet points ngắn**, tránh paragraph dài.
+- **Gộp changes cùng pattern** (ví dụ: "thêm field `x` vào 5 models sau: A, B, C, D, E — cùng pattern").
+
+### Plan format
+
+| Section | Bắt buộc | Nội dung |
+|---------|----------|----------|
+| **Goal** | ✅ | 1-2 câu, mục tiêu rõ ràng |
+| **Changes** | ✅ | Danh sách file → mỗi file: function/class + line range + mô tả thay đổi |
+| **New code** | Khi cần | Code snippet chỉ cho logic phức tạp/non-obvious |
+| **New files** | Khi cần | Mô tả purpose, exports, key logic — paste code chỉ khi complex |
+| **Order** | Khi >1 file | Thứ tự thực hiện nếu có dependency |
+| **Impact** | ✅ | Tóm tắt từ `gitnexus_impact`: risk level + d=1 callers |
+| **Verify** | ✅ | Commands để test sau implement |
+
+### Ví dụ
+
+```
+## Plan: Add trailing stop to momentum strategy
+
+### Goal
+Thêm trailing stop loss cho MomentumStrategy để bảo vệ profit.
+
+### Changes
+1. `src/strategies/momentum.py` — class `MomentumStrategy`:
+   - `__init__` (L30): thêm param `trailing_pct: float = 0.02`, init `self._peak_price = None`
+   - `on_bar` (L55-70): sau block tính signal, thêm logic:
+     - Track peak price khi có position
+     - Nếu price drop > trailing_pct từ peak → emit sell signal
+     - Reset peak khi flat
+
+2. `src/strategies/config.py` — dict `DEFAULT_PARAMS` (L12):
+   - Thêm key `"trailing_pct": 0.02`
+
+3. `tests/test_momentum.py` (NEW):
+   - Test trailing stop triggers khi price drops 3% từ peak
+   - Test trailing stop không trigger khi drop < threshold
+   - Test peak reset sau khi exit position
+
+### Impact
+- `MomentumStrategy` (d=1): 2 callers — `BacktestRunner.run()`, `LiveEngine.execute()`
+- Risk: LOW — additive change, không break existing behavior
+
+### Verify
+python -m pytest tests/test_momentum.py -v
+```
 
 ## Bookmap Build Deploy
 

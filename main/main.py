@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+from pathlib import Path
 
 from pipeline_status import HEARTBEAT_SECONDS, PipelineStatus, isoformat_utc, utc_now
 
@@ -13,6 +15,19 @@ async def _heartbeat_loop(status: PipelineStatus) -> None:
     while True:
         await asyncio.sleep(HEARTBEAT_SECONDS)
         status.publish()
+
+
+def _load_env_file(env_path: Path | None = None) -> Path:
+    resolved_path = env_path or Path(__file__).resolve().parent / ".env"
+    if not resolved_path.exists():
+        return resolved_path
+    for raw_line in resolved_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        os.environ[name.strip()] = value.strip()
+    return resolved_path
 
 
 def _initialize_status(
@@ -43,7 +58,7 @@ def _initialize_status(
     status.update_stage(
         "execution",
         state="up" if mt5_connected else "degraded",
-        reason="mt5 connected" if mt5_connected else "mt5 disconnected; simulator only",
+        reason="mt5 connected" if mt5_connected else "mt5 disconnected",
         updated_at=session_started_at,
         mt5_connected=mt5_connected,
         simulator_enabled=simulator_enabled,
@@ -57,6 +72,7 @@ async def main() -> None:
     from mt5_client import MT5Client
     from socket_server import SocketServer
 
+    _load_env_file()
     session_started_at = isoformat_utc(utc_now())
     logging.info("Starting Quantum Trade AI System...")
 
@@ -71,7 +87,7 @@ async def main() -> None:
         status,
         session_started_at,
         mt5_connected=mt5_connected,
-        simulator_enabled=analyzer.simulator is not None,
+        simulator_enabled=False,
         execution_errors_total=0 if mt5_connected else 1,
     )
     server = SocketServer(
@@ -107,7 +123,7 @@ async def main() -> None:
             reason="shutdown",
             updated_at=shutdown_at,
             mt5_connected=mt5_client.connected,
-            simulator_enabled=analyzer.simulator is not None,
+            simulator_enabled=False,
         )
         status.publish(now=shutdown_at)
 

@@ -1,4 +1,5 @@
 import logging
+import os
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -11,13 +12,34 @@ class MT5Client:
     def __init__(self):
         self.connected = False
         self.last_error = None
+        self.login = _env_int("QT_MT5_LOGIN")
+        self.password = os.environ.get("QT_MT5_PASSWORD")
+        self.server = os.environ.get("QT_MT5_SERVER")
+        self.terminal_path = os.environ.get("QT_MT5_TERMINAL_PATH")
+        self.timeout_ms = _env_int("QT_MT5_TIMEOUT_MS", default=60000) or 60000
+        self.portable = os.environ.get("QT_MT5_PORTABLE") == "1"
+        self.symbol_overrides = _load_symbol_overrides()
 
     def connect(self):
         if mt5 is None:
             self.last_error = "MetaTrader5 module not available"
             logging.error(self.last_error)
             return False
-        if not mt5.initialize():
+        initialize_args = []
+        initialize_kwargs = {
+            "timeout": self.timeout_ms,
+            "portable": self.portable,
+        }
+        if self.terminal_path:
+            initialize_args.append(self.terminal_path)
+        if self.login is not None:
+            initialize_kwargs["login"] = self.login
+        if self.password:
+            initialize_kwargs["password"] = self.password
+        if self.server:
+            initialize_kwargs["server"] = self.server
+
+        if not mt5.initialize(*initialize_args, **initialize_kwargs):
             self.last_error = str(mt5.last_error())
             logging.error(f"initialize() failed, error code = {self.last_error}")
             return False
@@ -65,23 +87,28 @@ class MT5Client:
         if not self.connected:
             logging.error("Not connected to MT5")
             return None
+
+        broker_symbol = self.resolve_symbol(symbol)
+        if not broker_symbol:
+            return None
             
         action = mt5.ORDER_TYPE_BUY if order_type.upper() == 'BUY' else mt5.ORDER_TYPE_SELL
         
-        tick = mt5.symbol_info_tick(symbol)
+        tick = mt5.symbol_info_tick(broker_symbol)
         if not tick:
-            logging.error(f"Cannot get tick for {symbol}")
+            self.last_error = f"Cannot get tick for {broker_symbol}"
+            logging.error(self.last_error)
             return None
             
         price = tick.ask if action == mt5.ORDER_TYPE_BUY else tick.bid
         
         # Calculate volume based on Risk %
-        volume = self.calculate_lot_size(symbol, risk_percentage, sl_pips)
+        volume = self.calculate_lot_size(broker_symbol, risk_percentage, sl_pips)
         if not volume: return None
 
         # Calculate exact SL/TP prices
         # pip_size for Forex is usually 0.0001
-        sym_info = mt5.symbol_info(symbol)
+        sym_info = mt5.symbol_info(broker_symbol)
         pip_size = sym_info.point * 10 
         if "JPY" in symbol: pip_size = sym_info.point * 10
         
@@ -97,7 +124,7 @@ class MT5Client:
             
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": symbol,
+            "symbol": broker_symbol,
             "volume": float(volume),
             "type": action,
             "price": price,
@@ -112,14 +139,61 @@ class MT5Client:
             
         result = mt5.order_send(request)
         if result.retcode != mt5.TRADE_RETCODE_DONE:
+            self.last_error = str(result.retcode)
             logging.error(f"Order failed, retcode={result.retcode}")
             return None
             
-        logging.info(f"Order Success: {order_type} {volume} Lots | Price: {result.price} | SL: {sl_price} | TP: {tp_price}")
+        self.last_error = None
+        logging.info(
+            f"Order Success: {order_type} {volume} Lots {broker_symbol} | Price: {result.price} | SL: {sl_price} | TP: {tp_price}"
+        )
         return result
+
+    def resolve_symbol(self, symbol):
+        broker_symbol = self.symbol_overrides.get(symbol.upper(), symbol)
+        symbol_info = mt5.symbol_info(broker_symbol)
+        if symbol_info is None:
+            self.last_error = f"Symbol not found in MT5: {broker_symbol}"
+            logging.error(self.last_error)
+            return None
+        if not getattr(symbol_info, "visible", True):
+            if not mt5.symbol_select(broker_symbol, True):
+                self.last_error = f"Failed to select symbol in MT5: {broker_symbol}"
+                logging.error(self.last_error)
+                return None
+        return broker_symbol
+
+    def has_open_position(self, symbol):
+        if not self.connected:
+            return False
+        broker_symbol = self.resolve_symbol(symbol)
+        if not broker_symbol:
+            return False
+        positions = mt5.positions_get(symbol=broker_symbol)
+        return bool(positions)
 
     def disconnect(self):
         if self.connected:
             mt5.shutdown()
             self.connected = False
             logging.info("Disconnected from MetaTrader 5")
+
+
+def _env_int(name, default=None):
+    value = os.environ.get(name)
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _load_symbol_overrides():
+    overrides = {}
+    for key, value in os.environ.items():
+        if not key.startswith("QT_MT5_SYMBOL_") or not value:
+            continue
+        symbol = key.removeprefix("QT_MT5_SYMBOL_").upper()
+        overrides[symbol] = value
+    return overrides

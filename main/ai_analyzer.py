@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from order_simulator import OrderSimulator
 from runtime_paths import (
     event_history_file,
     event_history_keys,
@@ -67,22 +66,13 @@ class AIAnalyzer:
         self.feature_keys = list(EXPECTED_FEATURE_SCHEMA)
         self.model = None
         self.model = self._load_or_train_initial_model()
-
-        self.simulator = OrderSimulator(
-            sim_config
-            or {
-                "balance": 10000,
-                "min_rr": 2.0,
-                "sl_mode": "fixed",
-                "sl_value": 20,
-                "tp_mode": "rr",
-                "tp_value": 2.0,
-                "lot_mode": "auto",
-                "lot_value": 1.0,
-                "pip_size": 0.01,
-                "pip_value_per_lot": 10.0,
-            }
-        )
+        self.signal_probability_threshold = _read_env_float("QT_SIGNAL_PROBABILITY_THRESHOLD", 0.65)
+        self.live_execution_enabled = os.environ.get("QT_ENABLE_LIVE_MT5") == "1"
+        self.live_risk_percentage = _read_env_float("QT_MT5_RISK_PERCENT", 0.25)
+        self.live_sl_pips = _read_env_float("QT_MT5_SL_PIPS", 20.0)
+        self.live_rr_ratio = _read_env_float("QT_MT5_RR_RATIO", 2.0)
+        self.live_order_cooldown_seconds = _read_env_float("QT_MT5_ORDER_COOLDOWN_SECONDS", 300.0)
+        self.last_live_order_at_by_symbol: dict[str, datetime] = {}
 
     def _publish_buffering_status(self, reason, state="degraded"):
         if self.status is None:
@@ -382,34 +372,30 @@ class AIAnalyzer:
             self._publish_buffering_status("awaiting normalized records", state="degraded")
             return
 
-        import numpy as np
-
         buffer.sort(key=lambda item: item.get("timestamp", ""))
         state = self.latest_state[symbol]
 
         for record in buffer:
             state.update(record)
-            features = self._extract_feature_vector(symbol, state, record)
-            if features is None or np.all(features == 0):
+            feature_frame = self._extract_feature_frame(symbol, state, record)
+            if feature_frame is None or (feature_frame.to_numpy() == 0).all():
                 continue
 
-            current_price = _safe_float(record.get("close", state.get("close", 0.0)))
-            spread = _safe_float(state.get("spread", 0.0))
-            self.simulator.check_open_trades(symbol, current_price)
-
             try:
-                prediction = self.model.predict(features)[0]
-                probability = self._prediction_probability(features)
+                prediction = self.model.predict(feature_frame)[0]
+                probability = self._prediction_probability(feature_frame)
                 self._publish_inference_status(
                     "model loaded",
                     state="up",
                     last_inference_at=record.get("timestamp"),
                 )
-                if probability > 0.65:
-                    if prediction == 1:
-                        self.simulator.open_trade(1, symbol, current_price, spread)
-                    elif prediction == -1:
-                        self.simulator.open_trade(-1, symbol, current_price, spread)
+                if probability >= self.signal_probability_threshold:
+                    self._route_prediction(
+                        symbol=symbol,
+                        prediction=int(prediction),
+                        probability=probability,
+                        timestamp_text=record.get("timestamp"),
+                    )
             except Exception as error:
                 logging.error("AI Prediction Error: %s", error)
                 self.inference_errors_total += 1
@@ -418,16 +404,85 @@ class AIAnalyzer:
         self.raw_data_buffer[symbol] = []
         self._publish_buffering_status("awaiting normalized records", state="degraded")
 
-    def _prediction_probability(self, features) -> float:
+    def _prediction_probability(self, feature_frame) -> float:
         if not hasattr(self.model, "predict_proba"):
             return 1.0
-        probabilities = self.model.predict_proba(features)
+        probabilities = self.model.predict_proba(feature_frame)
         if probabilities.size == 0:
             return 1.0
         return float(probabilities.max())
 
-    def _extract_feature_vector(self, symbol: str, state: dict[str, Any], record: dict[str, Any]):
-        import numpy as np
+    def _route_prediction(
+        self,
+        *,
+        symbol: str,
+        prediction: int,
+        probability: float,
+        timestamp_text: str | None,
+    ) -> None:
+        if prediction not in (-1, 1):
+            return
+        if self.live_execution_enabled:
+            self._try_live_order(
+                symbol=symbol,
+                prediction=prediction,
+                probability=probability,
+                timestamp_text=timestamp_text,
+            )
+            return
+        logging.info(
+            "Signal skipped for %s because QT_ENABLE_LIVE_MT5 is disabled (prediction=%s probability=%.4f)",
+            symbol,
+            prediction,
+            probability,
+        )
+
+    def _try_live_order(
+        self,
+        *,
+        symbol: str,
+        prediction: int,
+        probability: float,
+        timestamp_text: str | None,
+    ) -> None:
+        if not getattr(self.mt5_client, "connected", False):
+            logging.warning("Live MT5 execution enabled but MT5 is not connected; skipping %s", symbol)
+            return
+        if timestamp_text and not self._live_order_allowed(symbol, timestamp_text):
+            return
+        if hasattr(self.mt5_client, "has_open_position") and self.mt5_client.has_open_position(symbol):
+            logging.info("Skipping live MT5 order for %s because an open position already exists", symbol)
+            return
+        order_type = "BUY" if prediction == 1 else "SELL"
+        result = self.mt5_client.place_order_with_risk(
+            symbol=symbol,
+            order_type=order_type,
+            risk_percentage=self.live_risk_percentage,
+            sl_pips=self.live_sl_pips,
+            rr_ratio=self.live_rr_ratio,
+        )
+        if result is None:
+            logging.warning("MT5 live order rejected for %s %s at probability %.4f", order_type, symbol, probability)
+            return
+        order_timestamp = _parse_timestamp(timestamp_text) if timestamp_text else datetime.now(UTC)
+        self.last_live_order_at_by_symbol[symbol] = order_timestamp
+        logging.info("MT5 live order sent for %s %s at probability %.4f", order_type, symbol, probability)
+
+    def _live_order_allowed(self, symbol: str, timestamp_text: str) -> bool:
+        if self.live_order_cooldown_seconds <= 0:
+            return True
+        current_timestamp = _parse_timestamp(timestamp_text)
+        previous_timestamp = self.last_live_order_at_by_symbol.get(symbol)
+        if previous_timestamp is None:
+            return True
+        cooldown = timedelta(seconds=self.live_order_cooldown_seconds)
+        if current_timestamp - previous_timestamp >= cooldown:
+            return True
+        logging.info("Skipping live MT5 order for %s due to cooldown", symbol)
+        return False
+
+    def _extract_feature_frame(self, symbol: str, state: dict[str, Any], record: dict[str, Any]):
+        import pandas as pd
 
         timestamp_text = record.get("timestamp") or state.get("timestamp")
         if not timestamp_text:
@@ -487,10 +542,10 @@ class AIAnalyzer:
             bookmap_features["bookmap_wall_count_300s"],
             bookmap_features["bookmap_signed_value_300s"],
         ]
-        return np.array([values], dtype=float)
+        return pd.DataFrame([values], columns=self.feature_keys, dtype=float)
 
     def shutdown(self):
-        self.simulator.print_summary()
+        return None
 
 
 def _normalize_bookmap_event(event: str) -> str:
@@ -533,6 +588,16 @@ def _coalesce_numeric(state: dict[str, Any], key: str, *, fallback: Any) -> floa
     if key in state and state[key] not in (None, ""):
         return _safe_float(state[key])
     return _safe_float(fallback)
+
+
+def _read_env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value in (None, ""):
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
 
 
 def _parse_timestamp(value: str) -> datetime:

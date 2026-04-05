@@ -9,10 +9,34 @@ import pytest
 class FakeMT5Client:
     def __init__(self) -> None:
         self.connected = False
+        self.placed_orders: list[dict] = []
+        self.open_positions: set[str] = set()
 
     def connect(self) -> bool:
         self.connected = True
         return True
+
+    def place_order_with_risk(
+        self,
+        symbol: str,
+        order_type: str,
+        risk_percentage: float,
+        sl_pips: float,
+        rr_ratio: float,
+    ) -> dict | None:
+        order = {
+            "symbol": symbol,
+            "order_type": order_type,
+            "risk_percentage": risk_percentage,
+            "sl_pips": sl_pips,
+            "rr_ratio": rr_ratio,
+        }
+        self.placed_orders.append(order)
+        self.open_positions.add(symbol)
+        return order
+
+    def has_open_position(self, symbol: str) -> bool:
+        return symbol in self.open_positions
 
     def disconnect(self) -> None:
         self.connected = False
